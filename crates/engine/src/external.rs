@@ -1,6 +1,6 @@
 //! A mesh-bound scalar contour from a separately run program. The file is session input:
 //! reloading it reproduces the display; it never masquerades as a native solved step.
-use crate::cmd::{file, file_param, opt};
+use crate::cmd::{file, file_param, forms, opt};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 use fieldcraft_io::roots::Access;
@@ -11,8 +11,8 @@ use std::sync::Arc;
 pub(crate) const CONTOUR: CommandSpec = CommandSpec {
     id: "results.external.contour",
     label: "Show External Nodal Field",
-    params: r#"{"path":"pressure.field.json", "component"?: "magnitude|x|y|z"} — load a fieldcraft-nodal-field/1 on this exact SI mesh; the file supplies the name, unit and scalar or vector values for each original node label. A vector defaults to its magnitude. {"show":false} removes the external contour."#,
-    form: None,
+    params: r#"{"path":"pressure.field.json", "component"?: "auto|magnitude|x|y|z"} — load a fieldcraft-nodal-field/1 on this exact SI mesh; the file supplies the name, unit and scalar or vector values for each original node label. A vector defaults to its magnitude. {"show":false} removes the external contour."#,
+    form: Some(forms::EXTERNAL_CONTOUR),
     kind: CommandKind::Session,
     requires: &[Requirement::Mesh],
     run: contour,
@@ -51,7 +51,7 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
     let path = file_param(s, p, "path", Access::Read)?;
     let bytes = file::read_file(&path, 64 * 1024 * 1024)?;
     let data: FieldFile = serde_json::from_slice(&bytes).map_err(|e| EngineError::Params(format!("invalid nodal field: {e}")))?;
-    let component: Option<&str> = opt(p, "component")?;
+    let component = opt::<&str>(p, "component")?.filter(|value| *value != "auto");
     let hash = fieldcraft_io::sha256_hex(&fieldcraft_io::mesh::encode(&s.model)?);
     let contour = data.prepare(s.model.nodes().keys(), &hash, component).map_err(invalid)?;
     let field = ExternalField { revision: s.revision(), display_id: crate::next_revision(), contour };

@@ -68,11 +68,11 @@ mod tests {
     fn reads_integral_units_and_rejects_another_mesh_or_duplicate_names() {
         let q = json!({"name":"force","unit":"N","value":[1.,2.,3.]});
         let mut example = json!({"format":"fieldcraft-external-run/1","mesh_sha256":"abc","integrals":[q]});
-        assert_eq!(quantities(example.to_string().as_bytes(),"abc").unwrap()["integrals"][0],q);
-        assert!(quantities(example.to_string().as_bytes(),"xyz").is_err());
-        example["integrals"] = json!([q,q]);
-        assert!(quantities(example.to_string().as_bytes(),"abc").is_err());
-        example["integrals"][0]["value"]=json!([1.,2.]);
-        assert!(quantities(example.to_string().as_bytes(),"abc").is_err());
+        assert_eq!(quantities(example.to_string().as_bytes(), "abc").unwrap()["integrals"][0], q);
+        assert!(quantities(example.to_string().as_bytes(), "xyz").is_err());
+        example["integrals"] = json!([q, q]);
+        assert!(quantities(example.to_string().as_bytes(), "abc").is_err());
+        example["integrals"][0]["value"] = json!([1., 2.]);
+        assert!(quantities(example.to_string().as_bytes(), "abc").is_err());
     }
 }

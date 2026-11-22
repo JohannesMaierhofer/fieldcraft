@@ -34,3 +34,5 @@ each node. For harmonic solutions export separately named real, imaginary or amp
 The file limit is 64 MiB. Keep the source VTU beside this view file for access to all fields.
 
 Use **Results → Query → External Integrals** and select the external run manifest to inspect resultant quantities. The command reply lists each name, value and unit. The same operation is available to scripts as `results.external.integrals {"path":"results.json"}`. The manifest supplies `format: "fieldcraft-external-run/1"`, `mesh_sha256`, and an `integrals` array. Each quantity carries a unique name, unit and one finite real value or three Cartesian components.
+
+On the Results tab, **External Field** opens a nodal sidecar and selects its scalar value, vector magnitude or Cartesian component. **External Integrals** opens the matching run manifest and shows the signed scalar and vector quantities with their units in the reply panel. Both commands verify the current mesh before displaying data.
