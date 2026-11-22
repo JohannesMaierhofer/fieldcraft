@@ -16,10 +16,12 @@ fi
 lock_sha=$(/usr/bin/shasum -a 256 "$lock" | /usr/bin/awk '{print $1}')
 version="cpython313-ngsolve2608-$target-${lock_sha:0:16}"
 mkdir -p "$root/runtimes"
-if [[ -e "$root/python" && ! -L "$root/python" ]]; then
-    echo "The private runtime path already holds an unmanaged directory: $root/python" >&2
-    exit 1
-fi
+for link in current python bridge; do
+    if [[ -e "$root/$link" && ! -L "$root/$link" ]]; then
+        echo "Unmanaged installation path: $root/$link" >&2
+        exit 1
+    fi
+done
 stage=$(/usr/bin/mktemp -d "$root/.install-XXXXXXXX")
 cleanup() { /bin/rm -rf "$stage"; }
 trap cleanup EXIT
@@ -32,14 +34,15 @@ smoke() {
 if [[ ! -e "$package_dir" ]]; then
     mkdir "$stage/downloads" "$stage/payload"
     wheels=()
-    runtime=''
+    runtime=''; bridge=''
     while read -r digest url; do
         [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
         case "$url" in
-            https://github.com/astral-sh/python-build-standalone/releases/download/*|https://files.pythonhosted.org/packages/*) ;;
+            https://github.com/astral-sh/python-build-standalone/releases/download/*|https://files.pythonhosted.org/packages/*|https://codeload.github.com/JohannesMaierhofer/fieldcraft-ngsolve/zip/*) ;;
             *) echo "Unexpected runtime download host." >&2; exit 1 ;;
         esac
         name=${url##*/}; name=${name//%2B/+}
+        if [[ "$url" == https://codeload.github.com/* ]]; then name="bridge-$name.zip"; fi
         if [[ -d "$here/offline" ]]; then
             input="$here/offline/$name"
         else
@@ -54,15 +57,20 @@ if [[ ! -e "$package_dir" ]]; then
         case "$name" in
             *.tar.gz) runtime="$input" ;;
             *.whl) wheels+=("$input") ;;
+            bridge-*.zip) bridge="$input" ;;
             *) exit 1 ;;
         esac
     done < "$lock"
-    [[ -n "$runtime" && ${#wheels[@]} -gt 0 ]]
+    [[ -n "$runtime" && -n "$bridge" && ${#wheels[@]} -gt 0 ]]
     tar -xzf "$runtime" -C "$stage/payload"
     python="$stage/payload/python/bin/python3"
     PIP_CONFIG_FILE=/dev/null "$python" -I -B -m pip --isolated --no-cache-dir --disable-pip-version-check install \
         --no-index --no-deps --no-compile --no-warn-script-location "${wheels[@]}"
     "$python" -I -B -m pip --isolated --no-cache-dir --disable-pip-version-check check
+    /usr/bin/unzip -q "$bridge" -d "$stage/bridge-source"
+    directories=("$stage"/bridge-source/fieldcraft-ngsolve-*)
+    [[ ${#directories[@]} == 1 && -f "${directories[0]}/workflow.py" && -f "${directories[0]}/show_run.py" ]]
+    mv "${directories[0]}" "$stage/payload/bridge"
     cp "$lock" "$stage/payload/runtime.lock"
     cp "$here/NOTICE.txt" "$stage/payload/NOTICE.txt"
     smoke "$python"
@@ -70,5 +78,9 @@ if [[ ! -e "$package_dir" ]]; then
 fi
 cmp -s "$package_dir/runtime.lock" "$lock"
 smoke "$package_dir/python/bin/python3"
-ln -s "runtimes/$version/python" "$stage/python"
-/bin/mv -fh "$stage/python" "$root/python"
+ln -s "runtimes/$version" "$stage/current"
+/bin/mv -fh "$stage/current" "$root/current"
+for link in python bridge; do
+    ln -s "current/$link" "$stage/$link"
+    /bin/mv -fh "$stage/$link" "$root/$link"
+done
