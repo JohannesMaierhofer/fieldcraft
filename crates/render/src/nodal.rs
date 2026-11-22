@@ -73,7 +73,8 @@ impl FieldFile {
                 "magnitude" => None,
                 _ => return Err("vector component must be x, y, z, or magnitude"),
             };
-            self.values.chunks_exact(3).map(|v| component_index.map_or_else(|| v[0].hypot(v[1]).hypot(v[2]), |i| v[i])).collect()
+            let (vectors, _) = self.values.as_chunks::<3>();
+            vectors.iter().map(|v| component_index.map_or_else(|| v[0].hypot(v[1]).hypot(v[2]), |i| v[i])).collect()
         };
         if !self.unit.is_empty() {
             title.push_str(&format!(" [{}]", self.unit));
