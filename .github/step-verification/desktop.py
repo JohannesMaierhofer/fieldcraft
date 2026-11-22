@@ -36,7 +36,13 @@ try:
     call("ui.capture", path=str(out / "before.png"), width=1100, height=720, scale=1)
     call("ui.drop", paths=[str(cad)])
     while time.monotonic() < deadline:
-        bodies = call("engine.execute", command="geometry.bodies", params={})
+        call("job.wait")
+        try:
+            bodies = call("engine.execute", command="geometry.bodies", params={})
+        except RuntimeError as error:
+            if "wait for it or cancel it" not in str(error):
+                raise
+            continue
         if len(bodies) == 2:
             break
         time.sleep(.3)
