@@ -1,0 +1,9 @@
+FieldCraft external NGSolve runtime
+
+FieldCraft runs the private Python interpreter as a separate process. The original upstream binary distributions provide CPython, NumPy, NGSolve, Netgen and the Open CASCADE dependencies. runtime.lock records the exact download URLs and SHA-256 digests. The private Python distribution keeps lib/python3.13/LICENSE.txt, and each wheel retains its distribution metadata and bundled legal notices under python/lib/python3.13/site-packages. For example, ngsolve and netgen-mesher include licenses/LICENSE, and netgen-occt includes licenses/LICENSE_LGPL_21.txt.
+
+https://github.com/astral-sh/python-build-standalone/releases/tag/20261110
+https://pypi.org/project/ngsolve/6.2.2608/
+https://pypi.org/project/netgen-mesher/6.2.2608/
+https://pypi.org/project/netgen-occt/7.8.1/
+https://pypi.org/project/numpy/2.3.5/
