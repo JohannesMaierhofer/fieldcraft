@@ -28,6 +28,7 @@ pub use cmd::update::enable_checks as enable_update_checks;
 pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
 pub mod external;
+mod external_integrals;
 pub mod history;
 pub mod linearise;
 pub mod path;

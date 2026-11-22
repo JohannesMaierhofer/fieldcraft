@@ -748,6 +748,7 @@ pub static CATALOGUE: &[Capability] = &[
     // ---- Results ----
     ready_more("results.deformed", "Deformed", Results, "Display", "The deformed shape of a solved step, to scale", &["results.clear"]),
     ready("results.contour", "Contours", Results, "Display", "Contours of displacement and stress, with a legend"),
+    ready("results.external.contour", "External Field", Results, "Display", "Show a scalar or vector field on the original mesh"),
     ready("results.modes", "Mode Shapes", Results, "Display", "Mode shapes and frequencies of a frequency step"),
     ready_more(
         "results.animate",
@@ -756,6 +757,13 @@ pub static CATALOGUE: &[Capability] = &[
         "Display",
         "Animate the deformed shape, a mode or an explicit step's frames",
         &["results.frame"],
+    ),
+    ready(
+        "results.external.integrals",
+        "External Integrals",
+        Results,
+        "Query",
+        "Named scalar and vector integrals from an external solver on this mesh",
     ),
     ready_more(
         "solve.probe",

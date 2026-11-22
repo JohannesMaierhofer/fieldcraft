@@ -2636,6 +2636,11 @@ pub const IMPORT_ORPHAN: &[Field] = &[
         .help("Boundary surfaces select existing volume faces. Keep shells only for intentional surface elements that match no volume face.")
         .def("\"refuse\""),
 ];
+pub const EXTERNAL_CONTOUR: &[Field] = &[
+    path("path", "Nodal field", false).help("Choose a field from an external run on this mesh.").req(),
+    choice("component", "Vector component", &[("auto", "Scalar value or vector magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")]).def("\"auto\""),
+];
+pub const EXTERNAL_INTEGRALS: &[Field] = &[path("path", "Result manifest", false).help("Read integral results for the current mesh.").req()];
 pub const FILE_OPEN: &[Field] = &[path("path", "Model", false).help("The FieldCraft model file to open.").req()];
 const SAVE_RESULTS: Field = flag("results", "Keep results")
     .help("Keep every solved step's results in the file, so it opens showing them without solving again; off for a smaller file.")
