@@ -40,7 +40,8 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         let painter = ui.painter_at(rect);
         let area = crate::viewport::beside_card(app, rect);
         let title = format!("{}   {} … {}", field.title, number(field.min.1), number(field.max.1));
-        painter.text(area.left_top() + vec2(10., 10.), Align2::LEFT_TOP, title, FontId::proportional(14.), t.overlay_text);
+        let font = FontId::proportional(solidcraft_theme::Tokens::get().font_heading);
+        painter.text(area.left_top() + vec2(10., 10.), Align2::LEFT_TOP, title, font, t.overlay_text);
         return;
     }
     let Some(plot) = app.plot() else { return };

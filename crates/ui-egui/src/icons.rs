@@ -64,6 +64,8 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("deck.write.lsdyna", "export", ""),
     ("mesh.export.stl", "export", ""),
     ("results.read", "import", ""),
+    ("results.external.contour", "import", ""),
+    ("results.external.integrals", "measure", ""),
     ("results.export.vtu", "export", ""),
     ("results.animate", "play", ""),
     ("solve.probe", "measure", ""),
