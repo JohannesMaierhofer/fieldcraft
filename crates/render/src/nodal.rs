@@ -21,9 +21,14 @@ pub struct NodalContour {
     pub max: (u32, f64),
     labels: Vec<u32>,
     values: Vec<f64>,
+    pub range: [f64; 2],
 }
 
 impl FieldFile {
+    pub fn matches(&self, name: &str, unit: &str, components: usize) -> bool {
+        self.name == name && self.unit == unit && self.components == components
+    }
+
     pub fn prepare<'a>(
         self,
         nodes: impl ExactSizeIterator<Item = &'a u32>,
@@ -79,14 +84,14 @@ impl FieldFile {
         if !(max.1 - min.1).is_finite() {
             return Err("field range cannot be represented");
         }
-        Ok(NodalContour { title, min, max, labels: self.node_ids, values })
+        Ok(NodalContour { title, min, max, labels: self.node_ids, values, range: [min.1, max.1] })
     }
 }
 
 impl NodalContour {
     /// Reuse native band clipping and palettes in both the viewport and offscreen renders.
     pub fn draw(&self, display: &DisplayMesh, scene: &mut Scene, stops: &[Rgb], over: Rgb, none: Rgb) {
-        let bands = Bands::new(self.min.1, self.max.1, 12);
+        let bands = Bands::new(self.range[0], self.range[1], 12);
         let color = |k: Option<u32>| k.map_or(none, |k| bands_color(stops, over, &bands, k));
         scene.tris.clear();
         for tri in &display.tris {

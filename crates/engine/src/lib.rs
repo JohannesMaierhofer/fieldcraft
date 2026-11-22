@@ -29,6 +29,7 @@ pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
 pub mod external;
 mod external_integrals;
+pub mod external_series;
 pub mod history;
 pub mod linearise;
 pub mod path;
@@ -316,6 +317,7 @@ pub struct Session {
     pub model: Model,
     /// Optional verified nodal field from a separately run calculation.
     pub(crate) external_field: Option<Arc<external::ExternalField>>,
+    pub(crate) field_series: Option<external_series::Series>,
     /// The open SolidCraft design (`geometry.open`); shared, so a snapshot costs nothing.
     pub design: Option<Arc<Design>>,
     /// Face-tagged boundary surfaces (`geometry.import.mesh`): the input to volume meshing.
