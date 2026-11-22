@@ -83,6 +83,8 @@ pub enum Requirement {
     Result,
     /// Results on the display.
     ResultsShown,
+    /// A recorded external field series on the current mesh.
+    ExternalSeries,
     /// A saved view.
     SavedView,
     /// A render.
@@ -138,6 +140,7 @@ impl Requirement {
             Requirement::ActiveStep => m.idle_steps().next().is_none(),
             Requirement::Result => s.result_steps().next().is_some(),
             Requirement::ResultsShown => s.results_view.is_some(),
+            Requirement::ExternalSeries => s.external_series().is_some(),
             Requirement::SavedView => !s.view.views.is_empty(),
             Requirement::Render => !s.view.renders.is_empty(),
         }
@@ -181,6 +184,7 @@ impl Requirement {
             Requirement::ActiveStep => "every static step with its boundary conditions and loads active",
             Requirement::Result => "a solved step",
             Requirement::ResultsShown => "results on the display",
+            Requirement::ExternalSeries => "an external field series on the current mesh",
             Requirement::SavedView => "a saved view",
             Requirement::Render => "a render",
         }
@@ -221,6 +225,7 @@ impl Requirement {
             Requirement::ActiveStep => "model.step.activate",
             Requirement::Result => "solve.run",
             Requirement::ResultsShown => "results.contour",
+            Requirement::ExternalSeries => "results.external.series",
             Requirement::SavedView => "view.save",
             Requirement::Render => "results.render.save",
         }
