@@ -134,7 +134,7 @@ pub fn open_geometry(path: &str, bytes: &[u8]) -> Result<(Design, Vec<String>)> 
     let id = doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| crate::Error::Invalid(format!("import `{path}`: {e}")))?;
     let feature = doc.feature_mut(id).ok_or_else(|| crate::Error::Failed(format!("missing import feature for `{path}`")))?;
     feature.body_names = imported.body_names;
-    let design = rebuild(&doc).map_err(|e| crate::Error::Failed(format!("import `{path}`: {e}")))?;
+    let design = rebuild_with_body_names(&doc, BodyNames::Exchange).map_err(|e| crate::Error::Failed(format!("import `{path}`: {e}")))?;
     if let Some(error) = design.errors.first() {
         return Err(crate::Error::Invalid(format!("cannot build `{path}`: {}", error.message)));
     }
@@ -187,6 +187,15 @@ fn saved_format(bytes: &[u8]) -> Option<u32> {
 
 /// Rebuild an in-memory document (the design half of [`open_design`]).
 pub(crate) fn rebuild(doc: &Document) -> Result<Design> {
+    rebuild_with_body_names(doc, BodyNames::Design)
+}
+
+enum BodyNames {
+    Design,
+    Exchange,
+}
+
+fn rebuild_with_body_names(doc: &Document, naming: BodyNames) -> Result<Design> {
     let model = guard("rebuild design", || {
         let mut m = Model::new();
         m.evaluate(doc);
@@ -227,7 +236,12 @@ pub(crate) fn rebuild(doc: &Document) -> Result<Design> {
         })
         .collect();
     // The errors name the bodies as SolidCraft does; they follow the pieces' new names.
-    let renamed = number_split_bodies(&mut bodies);
+    let renamed = match naming {
+        BodyNames::Design => number_split_bodies(&mut bodies),
+        // A numeric suffix in a CAD product name belongs to the source. It does not identify
+        // pieces of a FieldCraft split, and must not change when occurrences move past each other.
+        BodyNames::Exchange => Vec::new(),
+    };
     let errors = errors
         .into_iter()
         .map(|mut e| {
@@ -335,6 +349,22 @@ mod tests {
         }
         centres.sort_by(f64::total_cmp);
         assert!((centres[0] - 1.0).abs() < 1e-8 && (centres[1] - 11.0).abs() < 1e-8, "{centres:?}");
+    }
+
+    #[test]
+    fn cad_product_names_with_numeric_suffixes_remain_distinct() {
+        use solidcraft_kernel::{ExportBody, StepHeader, step_export_bodies};
+        let left = crate::block([0.0; 3], [1.0; 3]).unwrap();
+        let right = crate::block([2.0; 3], [3.0; 3]).unwrap();
+        let solids = [
+            ExportBody { name: "Housing (7)".into(), body: &left.body, color: None },
+            ExportBody { name: "Housing (3)".into(), body: &right.body, color: None },
+        ];
+        let text = guard("write numbered products", || step_export_bodies(&solids, &StepHeader::default())).unwrap();
+        let (d, _) = open_geometry("housings.step", text.as_bytes()).unwrap();
+        assert_eq!(d.bodies.len(), 2);
+        assert!(d.body("Housing (7)").unwrap().measure().unwrap().centroid[0] < 1.0);
+        assert!(d.body("Housing (3)").unwrap().measure().unwrap().centroid[0] > 2.0);
     }
 
     #[test]
