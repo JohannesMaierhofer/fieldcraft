@@ -12,7 +12,7 @@ out.mkdir()
 with socket.socket() as probe:
     probe.bind(("127.0.0.1", 0))
     port = probe.getsockname()[1]
-app = subprocess.Popen(["target/debug/fieldcraft", "--control", str(port), str(cad)])
+app = subprocess.Popen(["target/debug/fieldcraft", "--control", str(port)])
 def call(method, **params):
     with socket.create_connection(("127.0.0.1", port), timeout=30) as sock, sock.makefile("rwb") as channel:
         channel.write((json.dumps(dict(id=1, method=method, params=params))+"\n").encode())
@@ -27,11 +27,18 @@ try:
         if app.poll() is not None:
             raise RuntimeError("GUI stopped during startup")
         try:
-            bodies = call("engine.execute", command="geometry.bodies", params={})
-            if len(bodies) == 2:
-                break
+            call("ui.inspect")
+            break
         except OSError:
-            pass
+            time.sleep(.3)
+    else:
+        raise RuntimeError("GUI control port did not open")
+    call("ui.capture", path=str(out / "before.png"), width=1100, height=720, scale=1)
+    call("ui.drop", paths=[str(cad)])
+    while time.monotonic() < deadline:
+        bodies = call("engine.execute", command="geometry.bodies", params={})
+        if len(bodies) == 2:
+            break
         time.sleep(.3)
     else:
         raise RuntimeError("STEP bodies never appeared")
