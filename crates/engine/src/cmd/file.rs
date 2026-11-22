@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use fieldcraft_geometry::tagged_mesh;
-use fieldcraft_geometry::{Design, MAX_DESIGN_BYTES, open_design};
+use fieldcraft_geometry::{Design, design_file_limit, open_design, open_geometry};
 use fieldcraft_io::{Geometry, ModelFile, SourceFile};
 use serde_json::{Value, json};
 
@@ -305,8 +305,18 @@ impl Session {
         let mut model = file.model;
         let mut names = super::names::Report::default();
         if let Some(stored) = &file.geometry.design {
-            let (opened, source) = reopen("design", stored, base, roots, MAX_DESIGN_BYTES as u64, open_design, copy(stored), &mut warnings);
-            design = opened.and_then(|d| {
+            let (opened, source) = reopen(
+                "design",
+                stored,
+                base,
+                roots,
+                design_file_limit(stored.path()) as u64,
+                |bytes| open_geometry(stored.path(), bytes),
+                copy(stored),
+                &mut warnings,
+            );
+            design = opened.and_then(|(d, import_warnings)| {
+                warnings.extend(import_warnings);
                 match super::datum::partitioned(&d, &framed).and_then(|cut| super::names::reconcile(&mut model, Some(&mut framed), &d, cut)) {
                     Ok((cut, report)) => {
                         names = report;
@@ -618,6 +628,34 @@ mod tests {
         assert!(s.model.materials().is_empty() && s.model.steps().is_empty() && s.design.is_none() && s.sample.is_none());
         assert!(!s.is_dirty(), "an empty model has nothing to save");
         assert!(s.execute("edit.undo", &json!({})).is_err(), "the undo history starts empty");
+    }
+
+    #[test]
+    fn step_source_reopens_from_disk_and_from_the_packed_model() {
+        let d = dir("step-roundtrip");
+        let path = d.join("pair.STP");
+        let model = d.join("pair.fieldcraft");
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly().unwrap()).unwrap();
+        let mut s = Session::default();
+        s.execute("geometry.open", &json!({"path": path})).unwrap();
+        let before = s.execute("geometry.bodies", &json!({})).unwrap();
+        assert_eq!(before.as_array().unwrap().len(), 2);
+        let first = &s.design.as_ref().unwrap().bodies[0];
+        let set = json!({"name":"Contact", "geometry":[{"body":first.name, "face":first.faces()[0].name}]});
+        s.execute("model.set.create", &set).unwrap();
+        s.execute("geometry.open", &json!({"path":path,"model":"keep"})).unwrap();
+        s.execute("file.save_as", &json!({"path":model, "geometry":"embed"})).unwrap();
+        for embedded in [false, true] {
+            if embedded {
+                std::fs::remove_file(&path).unwrap();
+            }
+            let mut t = Session::default();
+            let opened = t.execute("file.open", &json!({"path":model})).unwrap();
+            assert!(opened["design"].is_string(), "{opened}");
+            assert_eq!(t.execute("geometry.bodies", &json!({})).unwrap(), before);
+            assert_eq!(t.model, s.model);
+        }
+        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]
