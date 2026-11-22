@@ -25,13 +25,13 @@ pub(crate) const PLAYBACK: CommandSpec = CommandSpec {
     id: "results.external.playback",
     label: "External Field Playback",
     params: r#"{"frame"?: 0,"playing"?: true} — select a zero-based frame and pause, or play through the recorded timestamps in four display seconds. Starting at the last frame replays from the first. With no parameters, report the current frame and time in seconds."#,
-    form: None,
+    form: Some(forms::EXTERNAL_PLAYBACK),
     kind: CommandKind::Session,
-    requires: &[Requirement::Mesh],
+    requires: &[Requirement::ExternalSeries],
     run: control,
 };
 
-const MAX_FRAMES: usize = 4096;
+pub(crate) const MAX_FRAMES: usize = 4096;
 // Bound retained per-frame labels and scalars (at most 96 MiB plus frame metadata).
 const MAX_SAMPLES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
@@ -212,6 +212,7 @@ mod tests {
     #[test]
     fn signed_nonuniform_frames_are_verified_and_played_on_one_scale() {
         let mut s = Session::default();
+        assert!(matches!(s.execute("results.external.playback", &json!({})), Err(EngineError::Unavailable(_))));
         s.model.set_node(7, [0., 0., 0.]).unwrap();
         let dir = std::env::temp_dir().join(format!("fieldcraft-series-{}-{:?}", std::process::id(), std::thread::current().id()));
         fs::create_dir_all(&dir).unwrap();
@@ -230,7 +231,7 @@ mod tests {
         fs::write(&path, manifest.to_string()).unwrap();
         assert_eq!(load(&mut s, &params).unwrap()["range"], json!([-3., 4.]));
         assert_eq!(s.external_contour().unwrap().min.1, -3.);
-        control(&mut s, &json!({"playing":true})).unwrap();
+        s.execute("results.external.playback", &json!({"playing":true})).unwrap();
         s.advance_external_series(1.2);
         assert_eq!(s.external_series().unwrap().frame_time(), 0.25);
         assert_eq!(s.external_contour().unwrap().max.1, 2.);
