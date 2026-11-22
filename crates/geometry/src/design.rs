@@ -107,6 +107,43 @@ impl Design {
 /// The newest design format the pinned SolidCraft reads (and the one it writes).
 pub const DESIGN_FORMAT: u32 = solidcraft_doc::format::FORMAT;
 
+fn is_exchange_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ["step", "stp", "iges", "igs"].iter().any(|suffix| ext.eq_ignore_ascii_case(suffix)))
+}
+
+/// Byte limit for a design source, applied before reading its contents.
+pub fn design_file_limit(path: &str) -> usize {
+    if is_exchange_file(path) { solidcraft_io::MAX_STEP_BYTES } else { MAX_DESIGN_BYTES }
+}
+
+/// Open a geometry source, including a packed model's in-memory copy. SolidCraft's
+/// import feature carries the exact bodies of each occurrence already placed in world coordinates.
+pub fn open_geometry(path: &str, bytes: &[u8]) -> Result<(Design, Vec<String>)> {
+    if !is_exchange_file(path) {
+        return open_design(bytes).map(|d| (d, Vec::new()));
+    }
+    if bytes.len() > solidcraft_io::MAX_STEP_BYTES {
+        return Err(crate::Error::Invalid(format!("geometry file `{path}` exceeds the CAD import size limit")));
+    }
+    let imported = guard("read CAD exchange", || solidcraft_io::step_import_feature(bytes, path).map_err(|e| KernelError::Invalid(e.to_string())))
+        .map_err(|e| crate::Error::Invalid(format!("cannot open `{path}`: {e}")))?;
+    let mut doc = Document::new(&imported.name);
+    let id = doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| crate::Error::Invalid(format!("import `{path}`: {e}")))?;
+    let feature = doc.feature_mut(id).ok_or_else(|| crate::Error::Failed(format!("missing import feature for `{path}`")))?;
+    feature.body_names = imported.body_names;
+    let design = rebuild(&doc).map_err(|e| crate::Error::Failed(format!("import `{path}`: {e}")))?;
+    if let Some(error) = design.errors.first() {
+        return Err(crate::Error::Invalid(format!("cannot build `{path}`: {}", error.message)));
+    }
+    if design.bodies.is_empty() {
+        return Err(crate::Error::Invalid(format!("no bodies in `{path}`")));
+    }
+    Ok((design, imported.warnings))
+}
+
 /// Open a design from its file bytes (a `.solidcraft` container or a JSON design) and rebuild it.
 /// A design of a newer format than [`DESIGN_FORMAT`] is [`crate::Error::NewerDesign`].
 pub fn open_design(bytes: &[u8]) -> Result<Design> {
@@ -281,6 +318,42 @@ fn number_split_bodies(bodies: &mut [Shape]) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn step_places_both_occurrences_and_preserves_the_faces() {
+        let bytes = crate::sample::step_assembly().unwrap();
+        let (d, _) = open_geometry("pair.StP", &bytes).unwrap();
+        assert_eq!(d.bodies.len(), 2);
+        assert_ne!(d.bodies[0].name, d.bodies[1].name);
+        let mut centres = Vec::new();
+        for b in &d.bodies {
+            assert_eq!(b.faces().len(), 6);
+            assert_eq!(b.faces().iter().map(|f| &f.name).collect::<std::collections::BTreeSet<_>>().len(), 6);
+            let m = b.measure().unwrap();
+            assert!((m.volume - 24.0).abs() < 1e-8);
+            centres.push(m.centroid[0]);
+        }
+        centres.sort_by(f64::total_cmp);
+        assert!((centres[0] - 1.0).abs() < 1e-8 && (centres[1] - 11.0).abs() < 1e-8, "{centres:?}");
+    }
+
+    #[test]
+    fn iges_retains_the_geometry_and_unreadable_exchange_is_an_error() {
+        let shape = crate::block([0.0; 3], [2.0, 3.0, 4.0]).unwrap();
+        let text = guard("write sample IGES", || {
+            solidcraft_kernel::iges_export_bodies(
+                &[solidcraft_kernel::ExportBody { name: "Pad".into(), body: &shape.body, color: None }],
+                &solidcraft_kernel::StepHeader::default(),
+            )
+        })
+        .unwrap();
+        let (d, _) = open_geometry("pad.IGS", text.as_bytes()).unwrap();
+        assert_eq!(d.bodies.len(), 1);
+        assert!((d.bodies[0].measure().unwrap().volume - 24.0).abs() < 1e-8);
+        for file in ["broken.step", "broken.IGES"] {
+            assert!(open_geometry(file, b"malformed geometry").unwrap_err().to_string().contains(file));
+        }
+    }
 
     #[test]
     fn split_suffixes_are_stripped() {
