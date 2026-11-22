@@ -151,6 +151,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Panel | Capability | Status | Command |
 |---|---|---|---|
 | Display | Deformed — The deformed shape of a solved step, to scale | ready | `results.deformed`, `results.clear` |
+| Query | External Integrals — Named scalar and vector integrals from an external solver on this mesh | ready | `results.external.integrals` |
 | Display | Contours — Contours of displacement and stress, with a legend | ready | `results.contour` |
 | Display | Mode Shapes — Mode shapes and frequencies of a frequency step | ready | `results.modes` |
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |

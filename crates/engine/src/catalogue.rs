@@ -747,6 +747,7 @@ pub static CATALOGUE: &[Capability] = &[
     soon("solve.fsi", "Fluid–Structure", Solve, "Fluids", "M13", "Coupled fluid and structure solve"),
     // ---- Results ----
     ready_more("results.deformed", "Deformed", Results, "Display", "The deformed shape of a solved step, to scale", &["results.clear"]),
+    ready("results.external.integrals", "External Integrals", Results, "Query", "Named scalar and vector integrals from an external solver on this mesh"),
     ready("results.contour", "Contours", Results, "Display", "Contours of displacement and stress, with a legend"),
     ready("results.modes", "Mode Shapes", Results, "Display", "Mode shapes and frequencies of a frequency step"),
     ready_more(

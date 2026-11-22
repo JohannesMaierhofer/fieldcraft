@@ -27,6 +27,7 @@ pub use cmd::update::enable_checks as enable_update_checks;
 /// Write an output (a picture, an export) where a user named, never over a model or design.
 pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
+mod external_integrals;
 pub mod external;
 pub mod history;
 pub mod linearise;

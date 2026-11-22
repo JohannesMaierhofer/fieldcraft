@@ -32,3 +32,5 @@ Include every mesh node once, in ascending label order. Values are finite real n
 stated unit, flattened node by node. For a vector, set `components` to 3 and provide x, y, z for
 each node. For harmonic solutions export separately named real, imaginary or amplitude fields.
 The file limit is 64 MiB. Keep the source VTU beside this view file for access to all fields.
+
+Use **Results → Query → External Integrals** and select the external run manifest to inspect resultant quantities. The command reply lists each name, value and unit. The same operation is available to scripts as `results.external.integrals {"path":"results.json"}`. The manifest supplies `format: "fieldcraft-external-run/1"`, `mesh_sha256`, and an `integrals` array. Each quantity carries a unique name, unit and one finite real value or three Cartesian components.

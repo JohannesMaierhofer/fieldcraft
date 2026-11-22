@@ -770,7 +770,7 @@ impl ModelApp {
             self.model_changed();
         }
         // The results display commands reply with what is shown, which the viewport shows.
-        let display = (id.starts_with("results.") && id != "results.reactions") || id == "solve.run";
+        let display = (id.starts_with("results.") && !matches!(id, "results.reactions" | "results.external.integrals")) || id == "solve.run";
         // The reaction sums show in the results panel, however they were asked for.
         if id == "results.reactions"
             && let Ok(v) = &r
