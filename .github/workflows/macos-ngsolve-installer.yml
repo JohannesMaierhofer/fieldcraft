@@ -9,9 +9,14 @@ on:
         description: Application revision to package (needs external contours and integral results)
         type: string
         required: false
+      application_package_run:
+        description: Reuse a signed application from a successful installer run in this repository (leave application_ref blank)
+        type: string
+        required: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   package:
@@ -30,21 +35,56 @@ jobs:
             package_arch: aarch64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
+    env:
+      # The fork reuses the previously built, signed integration candidate.
+      # Other repositories build the selected ref or can pick a trusted run.
+      APP_RUN: ${{ inputs.application_package_run || (github.event_name == 'push' && github.repository == 'JohannesMaierhofer/fieldcraft' && '45047764148') || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Recover the signed native app from a verified installer run
+        id: reuse
+        if: env.APP_RUN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPLICIT_RUN: ${{ inputs.application_package_run }}
+          APPLICATION_REF: ${{ inputs.application_ref }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          [[ "$APP_RUN" =~ ^[1-9][0-9]*$ ]]
+          test -z "$APPLICATION_REF"
+          # An expired demonstration artifact automatically falls back to source.
+          # An explicitly requested run must be available.
+          unavailable() {
+            if [[ -n "$EXPLICIT_RUN" ]]; then echo "Requested run or artifact is unavailable" >&2; exit 1; fi
+            echo "No previous native app is available. Building the pinned source."
+            exit 0
+          }
+          info=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN") || unavailable
+          jq -e '.conclusion == "success" and .path == ".github/workflows/macos-ngsolve-installer.yml"' <<< "$info" > /dev/null || unavailable
+          sha=$(jq -r '.head_sha' <<< "$info")
+          gh run download "$APP_RUN" --repo "$GITHUB_REPOSITORY" --name "fieldcraft-ngsolve-macos-$ARCH-$sha" --dir "$RUNNER_TEMP/previous" || unavailable
+          pkgutil --expand-full "$RUNNER_TEMP/previous/FieldCraft-NGSolve-$ARCH.pkg" "$RUNNER_TEMP/previous-expanded"
+          app="$RUNNER_TEMP/previous-expanded/app.pkg/Payload/FieldCraft.app"
+          codesign --verify --strict --deep "$app"
+          mkdir -p "$RUNNER_TEMP/target/macos-package"
+          mv "$app" "$RUNNER_TEMP/target/macos-package/FieldCraft.app"
+          echo "restored=true" >> "$GITHUB_OUTPUT"
       # The demonstration fork builds the reviewed integration candidate separately
       # from installer-only changes. Other repositories package the selected ref.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.reuse.outputs.restored != 'true'
         with:
           ref: ${{ inputs.application_ref || (github.repository == 'JohannesMaierhofer/fieldcraft' && '0720c2111fd220f0e5f2267a96c068a6d38413a2') || github.sha }}
           path: application
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1 # rust-toolchain.toml
+        if: steps.reuse.outputs.restored != 'true'
         with:
           targets: ${{ matrix.rust_target }}
       - name: Build native FieldCraft and its CLI
+        if: steps.reuse.outputs.restored != 'true'
         working-directory: application
         env:
           PACKAGE_ARCH: ${{ matrix.package_arch }}
@@ -69,10 +109,12 @@ jobs:
           cli="$app/Contents/MacOS/fieldcraft-cli"
           mkdir -p "$RUNNER_TEMP/slab"
           cd "$RUNNER_TEMP/slab"
-          cp "$home/bridge/samples/slab.json" .
+          cp "$home/bridge/samples/"* .
           "$cli" run slab.json
-          "$home/python/bin/python3" "$home/bridge/workflow.py" slab.fieldcraft "$home/bridge/samples/potential.py" result --materials dielectric --boundaries left right wall
+          PYTHONHOME=/unrelated-python PYTHONPATH=/unrelated-python "$home/fieldcraft-ngsolve" case slab.case.json result
           "$cli" run result/view-1.json
+          jq --arg path "$PWD/result/results.json" '. + [{"command":"results.external.integrals","params":{"path":$path}}]' result/view-2.json > result/view-vector-and-integrals.json
+          "$cli" run result/view-vector-and-integrals.json
           "$home/python/bin/python3" -I -c 'import json,math; q=json.load(open("result/results.json"))["integrals"][0]; assert q["name"]=="stored_energy" and math.isclose(q["value"],4.4270939064e-14,rel_tol=1e-9),q'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

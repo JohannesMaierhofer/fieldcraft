@@ -74,7 +74,20 @@ if [[ ! -e "$package_dir" ]]; then
     cp "$lock" "$stage/payload/runtime.lock"
     cp "$here/NOTICE.txt" "$stage/payload/NOTICE.txt"
     smoke "$python"
-    mv "$stage/payload" "$package_dir"
+    # Rename atomically. If an identical installer wins the race, retain the
+    # winning complete directory and verify its lock and runtime below.
+    "$python" -I -B - "$stage/payload" "$package_dir" <<'RENAME'
+import errno
+import os
+import sys
+
+source, destination = sys.argv[1:]
+try:
+    os.rename(source, destination)
+except OSError as error:
+    if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) or not os.path.isdir(destination):
+        raise
+RENAME
 fi
 cmp -s "$package_dir/runtime.lock" "$lock"
 smoke "$package_dir/python/bin/python3"
@@ -84,3 +97,7 @@ for link in python bridge; do
     ln -s "current/$link" "$stage/$link"
     /bin/mv -fh "$stage/$link" "$root/$link"
 done
+# Update the installed command on every installer run, including runtime reuse.
+cp "$here/fieldcraft-ngsolve" "$stage/fieldcraft-ngsolve"
+chmod 755 "$stage/fieldcraft-ngsolve"
+/bin/mv -fh "$stage/fieldcraft-ngsolve" "$root/fieldcraft-ngsolve"
