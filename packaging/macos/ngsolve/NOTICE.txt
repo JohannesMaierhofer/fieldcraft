@@ -7,3 +7,6 @@ https://pypi.org/project/ngsolve/6.2.2608/
 https://pypi.org/project/netgen-mesher/6.2.2608/
 https://pypi.org/project/netgen-occt/7.8.1/
 https://pypi.org/project/numpy/2.3.5/
+
+The separate FieldCraft–NGSolve bridge retains its MIT and Apache-2.0 license texts under bridge/.
+https://github.com/JohannesMaierhofer/fieldcraft-ngsolve/tree/0b304e46cc299e9c5906a0fc51b052ef2df0f37f
