@@ -99,6 +99,8 @@ pub(crate) struct PendingPicker {
 
 const MODEL: Filter = Filter { name: "FieldCraft model", extensions: &["fieldcraft"] };
 const DESIGN: Filter = Filter { name: "SolidCraft design", extensions: &["solidcraft"] };
+const STEP: Filter = Filter { name: "STEP geometry", extensions: &["step", "stp", "STEP", "STP"] };
+const IGES: Filter = Filter { name: "IGES geometry", extensions: &["iges", "igs", "IGES", "IGS"] };
 const MESH: Filter = Filter { name: "Face-tagged mesh (3MF)", extensions: &["3mf", "3MF"] };
 const ORPHAN: Filter = Filter { name: "Orphan mesh (Gmsh MSH 4.1)", extensions: &["msh", "MSH"] };
 /// The Delete confirmation's icon: the kit's bin, as its delete buttons draw.
@@ -106,17 +108,20 @@ pub(crate) const DELETE_ICON: &str = "delete";
 const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
 /// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
-const ANY: Filter = Filter { name: "Models, designs and meshes", extensions: &["fieldcraft", "solidcraft", "3mf", "3MF", "msh", "MSH"] };
+const ANY: Filter = Filter {
+    name: "Models, designs and meshes",
+    extensions: &["fieldcraft", "solidcraft", "step", "stp", "STEP", "STP", "iges", "igs", "IGES", "IGS", "3mf", "3MF", "msh", "MSH"],
+};
 
 /// The Open picker's filters: everything FieldCraft opens, then each type.
-pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, MESH, ORPHAN];
+pub const OPEN_FILTERS: &[Filter] = &[ANY, MODEL, DESIGN, STEP, IGES, MESH, ORPHAN];
 
 /// What opening a file does with it, from its extension.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// A `.fieldcraft` model replaces the session (`file.open`).
     Model,
-    /// A `.solidcraft` design becomes the geometry (`geometry.open`).
+    /// A SolidCraft design or STEP/IGES file becomes the geometry (`geometry.open`).
     Design,
     /// A `.3mf` face-tagged mesh is added as a surface (`geometry.import.mesh`).
     Mesh,
@@ -130,7 +135,7 @@ impl Kind {
         let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
         match ext.as_str() {
             "fieldcraft" => Some(Kind::Model),
-            "solidcraft" => Some(Kind::Design),
+            "solidcraft" | "step" | "stp" | "iges" | "igs" => Some(Kind::Design),
             "3mf" => Some(Kind::Mesh),
             "msh" => Some(Kind::Orphan),
             _ => None,
@@ -150,7 +155,7 @@ impl Kind {
     fn filters(self) -> &'static [Filter] {
         match self {
             Kind::Model => &[MODEL, ANY],
-            Kind::Design => &[DESIGN, ANY],
+            Kind::Design => &[DESIGN, STEP, IGES, ANY],
             Kind::Mesh => &[MESH, ANY],
             Kind::Orphan => &[ORPHAN, ANY],
         }
@@ -952,7 +957,9 @@ impl ModelApp {
     pub fn open_path(&mut self, path: &str) {
         let Some(kind) = Kind::of(path) else {
             self.set_status(
-                format!("{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, .3mf tagged meshes and .msh orphan meshes"),
+                format!(
+                    "{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
+                ),
                 true,
             );
             return;
@@ -1465,7 +1472,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         let fraction = app.loading.as_ref().and_then(|l| l.progress.snapshot().fraction());
         let text = match app.loading.as_ref() {
             Some(l) => l.line(),
-            None => "Drop to open: .fieldcraft models, .solidcraft designs, .3mf tagged meshes, .msh orphan meshes".into(),
+            None => "Drop to open: .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
         // A notification surface (the kit's Toast), independent of the workspace layout, with the
@@ -2216,10 +2223,36 @@ pub(crate) mod tests {
         assert_eq!(Kind::of("part.3MF").map(Kind::command), Some("geometry.import.mesh"));
         assert_eq!(Kind::of("part.MSH").map(Kind::command), Some("mesh.import.orphan"));
         assert!(is_long("mesh.import.orphan"));
-        assert_eq!(Kind::of("part.step"), None);
+        for path in ["part.step", "part.StP", "part.IGES", "part.igs"] {
+            assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"));
+        }
+        assert_eq!(Kind::of("part.unknown"), None);
         assert_eq!(Kind::of("noext"), None);
         assert_eq!(with_extension("a/b".into(), "fieldcraft"), "a/b.fieldcraft");
         assert_eq!(with_extension("a/b.FIELDCRAFT".into(), "fieldcraft"), "a/b.FIELDCRAFT");
+    }
+
+    #[test]
+    fn step_picker_opens_the_assembly_and_a_failed_drop_keeps_it() {
+        let dir = temp("step-picker");
+        let path = dir.join("assembly.STP").to_string_lossy().into_owned();
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly().unwrap()).unwrap();
+        let offered = Rc::new(RefCell::new(Vec::new()));
+        let mut app = ModelApp::new(Session::default());
+        app.services.pick_open = Some(answering(Some(path.clone()), offered.clone()));
+        app.open_dialog(None);
+        assert!(offered.borrow()[0].contains(&STEP));
+        assert_eq!(app.busy(), Some("Opening assembly.STP"));
+        app.wait_loaded();
+        assert_eq!(app.session.design.as_ref().unwrap().bodies.len(), 2);
+        assert_eq!(app.recent.paths, [path]);
+        let broken = dir.join("empty.step");
+        std::fs::write(&broken, []).unwrap();
+        app.open_path(&broken.to_string_lossy());
+        app.wait_loaded();
+        assert!(app.status.as_ref().is_some_and(|s| s.error && s.text.contains("empty.step")));
+        assert_eq!(app.session.design.as_ref().unwrap().bodies.len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
