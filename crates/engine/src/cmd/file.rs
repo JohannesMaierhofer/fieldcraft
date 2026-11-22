@@ -635,7 +635,7 @@ mod tests {
         let d = dir("step-roundtrip");
         let path = d.join("pair.STP");
         let model = d.join("pair.fieldcraft");
-        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly().unwrap()).unwrap();
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
         let mut s = Session::default();
         s.execute("geometry.open", &json!({"path": path})).unwrap();
         let before = s.execute("geometry.bodies", &json!({})).unwrap();
@@ -643,7 +643,12 @@ mod tests {
         let first = &s.design.as_ref().unwrap().bodies[0];
         let set = json!({"name":"Contact", "geometry":[{"body":first.name, "face":first.faces()[0].name}]});
         s.execute("model.set.create", &set).unwrap();
-        s.execute("geometry.open", &json!({"path":path,"model":"keep"})).unwrap();
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(15.0).unwrap()).unwrap();
+        let updated = s.execute("geometry.open", &json!({"path":path,"model":"keep"})).unwrap();
+        assert_eq!(updated["stale"]["references"], json!([]), "{updated}");
+        assert_eq!(updated["stale"]["sets"], json!([]), "{updated}");
+        let revised = s.execute("geometry.bodies", &json!({})).unwrap();
+        assert_ne!(before, revised, "the second occurrence moved");
         s.execute("file.save_as", &json!({"path":model, "geometry":"embed"})).unwrap();
         for embedded in [false, true] {
             if embedded {
@@ -652,7 +657,7 @@ mod tests {
             let mut t = Session::default();
             let opened = t.execute("file.open", &json!({"path":model})).unwrap();
             assert!(opened["design"].is_string(), "{opened}");
-            assert_eq!(t.execute("geometry.bodies", &json!({})).unwrap(), before);
+            assert_eq!(t.execute("geometry.bodies", &json!({})).unwrap(), revised);
             assert_eq!(t.model, s.model);
         }
         let _ = std::fs::remove_dir_all(d);

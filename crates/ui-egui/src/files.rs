@@ -2291,7 +2291,7 @@ pub(crate) mod tests {
     fn step_picker_opens_the_assembly_and_a_failed_drop_keeps_it() {
         let dir = temp("step-picker");
         let path = dir.join("assembly.STP").to_string_lossy().into_owned();
-        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly().unwrap()).unwrap();
+        std::fs::write(&path, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
         let offered = Rc::new(RefCell::new(Vec::new()));
         let mut app = ModelApp::new(Session::default());
         app.services.pick_open = Some(answering(Some(path.clone()), offered.clone()));
