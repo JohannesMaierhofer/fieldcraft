@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn step_places_both_occurrences_and_preserves_the_faces() {
-        let bytes = crate::sample::step_assembly().unwrap();
+        let bytes = crate::sample::step_assembly(10.0).unwrap();
         let (d, _) = open_geometry("pair.StP", &bytes).unwrap();
         assert_eq!(d.bodies.len(), 2);
         assert_ne!(d.bodies[0].name, d.bodies[1].name);
