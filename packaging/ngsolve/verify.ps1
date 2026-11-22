@@ -79,9 +79,29 @@ try {
             try { $socket.Connect('127.0.0.1',$port); $ready = $true } catch { Start-Sleep -Milliseconds 500 } finally { $socket.Dispose() }
         }
         if (-not $ready) { throw 'No GUI control listener after 60 seconds' }
+        $capture = @'
+import json
+from pathlib import Path
+import sys
+import time
+sys.path.insert(0, sys.argv[1])
+from show_run import Control
+
+control = Control(int(sys.argv[2]))
+window = Path(sys.argv[3])
+control('ui.move', {'x': 3, 'y': 3})
+time.sleep(.35)
+state = control('ui.inspect', {})
+proof = {key: state.get(key) for key in ('nodes', 'elements', 'renderer', 'adapter', 'results')}
+window.with_suffix('.json').write_text(json.dumps(proof, indent=2), encoding='utf-8')
+print(control('ui.capture', dict(path=str(window), width=1200, height=760, scale=1)))
+if window.stat().st_size < 1000:
+    raise ValueError('Missing native window capture')
+'@
         & $python "$homeDir/bridge/show_run.py" first-run --port $port --field potential --integrals --open-model
-        & $python -c "import sys;sys.path.insert(0,sys.argv[1]);from show_run import Control;print(Control(int(sys.argv[2]))('ui.capture',dict(path=sys.argv[3],width=1200,height=760,scale=1)))" "$homeDir/bridge" $port "$out/window.png"
-        if ((Get-Item "$out/window.png").Length -lt 1000) { throw 'Missing native window capture' }
+        & $python -c $capture "$homeDir/bridge" $port "$out/window.png"
+        & $python "$homeDir/bridge/show_run.py" first-run --port $port --field electric_field --component x
+        & $python -c $capture "$homeDir/bridge" $port "$out/vector.png"
     } finally { if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() } }
 } finally {
     Pop-Location
