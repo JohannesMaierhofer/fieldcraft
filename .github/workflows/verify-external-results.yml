@@ -34,5 +34,9 @@ jobs:
       - name: Test touched crates
         run: cargo test --locked --profile ci -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui
       - name: Check touched crates with clippy
+        id: clippy
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --profile ci -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui --all-targets -- -D warnings
+      - name: Collect downstream diagnostics after a lint failure
+        if: ${{ failure() && steps.clippy.outcome == 'failure' }}
+        run: cargo clippy --locked --profile ci -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui --all-targets
