@@ -1,0 +1,74 @@
+#!/bin/bash
+# Apple Installer supplies the target volume as its third argument.
+set -euo pipefail
+umask 022
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV
+here=$(cd "$(dirname "$0")" && pwd)
+volume=${3:?expected Installer target volume}
+root="${volume%/}/Library/Application Support/FieldCraft/NGSolve"
+lock="$here/runtime.lock"
+read -r target < "$here/arch"
+if [[ $(/usr/bin/uname -m) != "$target" ]]; then
+    echo "This installer requires native $target execution." >&2
+    exit 1
+fi
+lock_sha=$(/usr/bin/shasum -a 256 "$lock" | /usr/bin/awk '{print $1}')
+version="cpython313-ngsolve2608-$target-${lock_sha:0:16}"
+mkdir -p "$root/runtimes"
+if [[ -e "$root/python" && ! -L "$root/python" ]]; then
+    echo "The private runtime path already holds an unmanaged directory: $root/python" >&2
+    exit 1
+fi
+stage=$(/usr/bin/mktemp -d "$root/.install-XXXXXXXX")
+cleanup() { /bin/rm -rf "$stage"; }
+trap cleanup EXIT
+package_dir="$root/runtimes/$version"
+smoke() {
+    # -I ignores PYTHON* variables and user packages. A tiny real FE integral
+    # exercises the native modules and their shared libraries after relocation.
+    "$1" -I -B -c 'import pathlib,sys,importlib.metadata as m; import numpy,netgen,ngsolve as ng; from netgen.geom2d import unit_square; p=pathlib.Path(sys.prefix).resolve(); assert all(pathlib.Path(x.__file__).resolve().is_relative_to(p) for x in (ng,numpy,netgen)); assert m.version("ngsolve")=="6.2.2608" and m.version("netgen-mesher")=="6.2.2608" and m.version("netgen-occt")=="7.8.1" and m.version("numpy")=="2.3.5"; mesh=ng.Mesh(unit_square.GenerateMesh(maxh=.5)); assert abs(ng.Integrate(1.0,mesh)-1.0)<1e-12; print(sys.version,ng.__version__,mesh.ne)'
+}
+if [[ ! -e "$package_dir" ]]; then
+    mkdir "$stage/downloads" "$stage/payload"
+    wheels=()
+    runtime=''
+    while read -r digest url; do
+        [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+        case "$url" in
+            https://github.com/astral-sh/python-build-standalone/releases/download/*|https://files.pythonhosted.org/packages/*) ;;
+            *) echo "Unexpected runtime download host." >&2; exit 1 ;;
+        esac
+        name=${url##*/}; name=${name//%2B/+}
+        if [[ -d "$here/offline" ]]; then
+            input="$here/offline/$name"
+        else
+            input="$stage/downloads/$name"
+            /usr/bin/curl --disable --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --retry 2 --connect-timeout 20 --max-time 600 --output "$input" "$url"
+        fi
+        actual=$(/usr/bin/shasum -a 256 "$input" | /usr/bin/awk '{print $1}')
+        if [[ "$actual" != "$digest" ]]; then
+            echo "Checksum failed: $name" >&2
+            exit 1
+        fi
+        case "$name" in
+            *.tar.gz) runtime="$input" ;;
+            *.whl) wheels+=("$input") ;;
+            *) exit 1 ;;
+        esac
+    done < "$lock"
+    [[ -n "$runtime" && ${#wheels[@]} -gt 0 ]]
+    tar -xzf "$runtime" -C "$stage/payload"
+    python="$stage/payload/python/bin/python3"
+    PIP_CONFIG_FILE=/dev/null "$python" -I -B -m pip --isolated --no-cache-dir --disable-pip-version-check install \
+        --no-index --no-deps --no-compile --no-warn-script-location "${wheels[@]}"
+    "$python" -I -B -m pip --isolated --no-cache-dir --disable-pip-version-check check
+    cp "$lock" "$stage/payload/runtime.lock"
+    cp "$here/NOTICE.txt" "$stage/payload/NOTICE.txt"
+    smoke "$python"
+    mv "$stage/payload" "$package_dir"
+fi
+cmp -s "$package_dir/runtime.lock" "$lock"
+smoke "$package_dir/python/bin/python3"
+ln -s "runtimes/$version/python" "$stage/python"
+/bin/mv -fh "$stage/python" "$root/python"

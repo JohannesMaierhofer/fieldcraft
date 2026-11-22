@@ -8,6 +8,10 @@ thing published without a maintainer is the nightly pre-release of `develop`
 ([Nightly builds](#nightly-builds)). The workflow is `.github/workflows/release.yml`; the packaging scripts
 are in `packaging/` and run the same way on a developer machine.
 
+A separate macOS product installer installs FieldCraft with a private NGSolve interpreter for
+external analysis scripts. The Intel and Apple Silicon locks, build instructions and local offline
+option are in the [NGSolve packaging notes](../packaging/macos/ngsolve/README.md).
+
 ## Building on Intel macOS
 
 Run the **Intel macOS packages** workflow on the desired branch or tag to build on a native
