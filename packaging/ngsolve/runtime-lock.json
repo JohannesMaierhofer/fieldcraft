@@ -66,8 +66,8 @@
     ]
   },
   "bridge": {
-    "url": "https://codeload.github.com/JohannesMaierhofer/fieldcraft-ngsolve/zip/0b304e46cc299e9c5906a0fc51b052ef2df0f37f",
-    "sha256": "2f0df9d48ca26e528ac8dfaf78623e738006d459031d8be415a18d1da2b4d5ba"
+    "url": "https://codeload.github.com/JohannesMaierhofer/fieldcraft-ngsolve/zip/55028903c83d1914c3bbf40da19abc2cb1f39b8d",
+    "sha256": "d2fed34691aa570feb53ad5ebdb5c7d3f25b7e98e70f90753eafa8b9bf01ca89"
   },
   "inno": {
     "url": "https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe",

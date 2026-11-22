@@ -48,11 +48,18 @@ Push-Location $out
 try {
     $runtime = & $python -c "import json,sys,sysconfig,numpy,ngsolve,netgen; print(json.dumps(dict(python=sys.version,platform=sysconfig.get_platform(),numpy=numpy.__version__,ngsolve=ngsolve.__version__,netgen=netgen.__version__)))" | ConvertFrom-Json
     if ($runtime.python -notlike '3.13.18 *' -or $runtime.numpy -ne '2.3.5' -or $runtime.ngsolve -ne '6.2.2608' -or $runtime.netgen -ne '6.2.2608') { throw 'Unexpected solver runtime' }
+    $runtime | Add-Member -NotePropertyName host -NotePropertyValue ([Runtime.InteropServices.RuntimeInformation]::OSDescription)
+    if ($IsWindows) {
+        $runtime | Add-Member -NotePropertyName gui_pe_machine -NotePropertyValue ('0x{0:x4}' -f (PeMachine $gui))
+        $runtime | Add-Member -NotePropertyName cli_pe_machine -NotePropertyValue ('0x{0:x4}' -f (PeMachine $cli))
+        $runtime | Add-Member -NotePropertyName solver_pe_machine -NotePropertyValue ('0x{0:x4}' -f (PeMachine $python))
+    }
     $runtime | ConvertTo-Json | Set-Content runtime.json
+    & $python -m unittest discover -s "$homeDir/bridge" -p 'test_*.py'
     & $cli --version
-    Copy-Item "$homeDir/bridge/samples/slab.json" .
+    Copy-Item "$homeDir/bridge/samples/*" .
     & $cli run slab.json
-    & $launcher slab.fieldcraft "$homeDir/bridge/samples/potential.py" first-run --materials dielectric --boundaries left right wall
+    & $launcher case slab.case.json first-run
     $m = Get-Content -Raw first-run/results.json | ConvertFrom-Json
     $e = $m.integrals | Where-Object name -eq stored_energy
     $reference = 4.4270939064e-14

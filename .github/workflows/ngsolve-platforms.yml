@@ -8,6 +8,7 @@ on:
       - packaging/ngsolve/**
 permissions:
   contents: read
+  actions: read
 jobs:
   package:
     if: github.repository == 'JohannesMaierhofer/fieldcraft'
@@ -43,21 +44,66 @@ jobs:
           ref: 0720c2111fd220f0e5f2267a96c068a6d38413a2
           path: app-source
           persist-credentials: false
+      - name: Restore the native app, CLI and notices
+        id: core-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: fieldcraft-core-0720c2111fd220f0e5f2267a96c068a6d38413a2-rust1.99.1-${{ matrix.target }}
+          path: |
+            app-source/target/${{ matrix.target }}/release/fieldcraft
+            app-source/target/${{ matrix.target }}/release/fieldcraft.exe
+            app-source/target/${{ matrix.target }}/release/fieldcraft-cli
+            app-source/target/${{ matrix.target }}/release/fieldcraft-cli.exe
+            app-source/THIRD-PARTY-LICENSES.txt
+      - name: Recover previously installed binaries for the pinned app commit
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        id: core
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: ./packaging/ngsolve/restore-core.ps1 -Label '${{ matrix.label }}' -Target '${{ matrix.target }}'
       - uses: dtolnay/rust-toolchain@1.99.1
+        if: steps.core-cache.outputs.cache-hit != 'true' && steps.core.outputs.restored != 'true'
         with:
           targets: ${{ matrix.target }}
       - name: Build FieldCraft
+        if: steps.core-cache.outputs.cache-hit != 'true' && steps.core.outputs.restored != 'true'
         working-directory: app-source
         run: cargo build --release --locked --target ${{ matrix.target }} -p fieldcraft -p fieldcraft-cli
       - name: Collect FieldCraft dependency notices
+        if: steps.core-cache.outputs.cache-hit != 'true' && steps.core.outputs.restored != 'true'
         working-directory: app-source
         run: cargo run --release --locked -p xtask -- licences
+      - name: Preserve the app before packaging and GUI tests
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: fieldcraft-core-0720c2111fd220f0e5f2267a96c068a6d38413a2-rust1.99.1-${{ matrix.target }}
+          path: |
+            app-source/target/${{ matrix.target }}/release/fieldcraft
+            app-source/target/${{ matrix.target }}/release/fieldcraft.exe
+            app-source/target/${{ matrix.target }}/release/fieldcraft-cli
+            app-source/target/${{ matrix.target }}/release/fieldcraft-cli.exe
+            app-source/THIRD-PARTY-LICENSES.txt
       - name: Assemble the offline installer
         shell: pwsh
         run: ./packaging/ngsolve/package.ps1 -Target '${{ matrix.target }}' -Label '${{ matrix.label }}'
       - name: Install to a new path and run the slab through FieldCraft and NGSolve
         shell: pwsh
         run: ./packaging/ngsolve/verify.ps1 -Label '${{ matrix.label }}'
+      - name: Install the Debian package in a minimal Ubuntu 22.04 image
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD/dist/ngsolve:/packages:ro" ubuntu:22.04 bash -ec '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /packages/*.deb
+            fieldcraft-ngsolve-cli --version
+            mkdir /tmp/slab && cd /tmp/slab
+            cp /opt/fieldcraft-ngsolve/bridge/samples/* .
+            fieldcraft-ngsolve-cli run slab.json
+            fieldcraft-ngsolve case slab.case.json first-run
+          '
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: fieldcraft-ngsolve-${{ matrix.label }}

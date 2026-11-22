@@ -8,33 +8,31 @@ The Windows installer sets up FieldCraft for the current user. Start it from the
 | windows-arm64 | Windows ARM64 | CPython x64 through Windows 11 x64 emulation |
 | linux-x64 | Linux x86_64, glibc 2.35 or later | CPython x86_64 |
 
-A Linux ARM64 installer requires compatible NGSolve and Netgen binaries. NGSolve 6.2.2608 on PyPI supplies CPython 3.13 Linux x86_64 wheels. The package lock records the selected interpreter and each wheel URL and SHA-256.
+A Linux ARM64 installer requires compatible NGSolve and Netgen binaries. NGSolve 6.2.2608 on PyPI supplies CPython 3.13 Linux x86_64 wheels. The package lock records the selected interpreter and each wheel URL and SHA-256. Windows 11 supplies the x64 emulator used by the ARM64 edition. [NGSolve 6.2.2608 distributions](https://pypi.org/project/ngsolve/6.2.2608/#files) · [Windows on Arm emulation](https://learn.microsoft.com/en-us/windows/arm/apps-on-arm-x86-emulation)
 
 ## First calculation
 
-Create a writable model directory. Copy `bridge/samples/slab.json` into it, mesh the slab with FieldCraft, then run the installed example.
+Create a writable model directory. Copy the three files under `bridge/samples` into it and mesh the slab. The case command runs the selected script and opens its field and energy in a new FieldCraft window.
 
 Linux shell:
 
 ```sh
 bridge=/opt/fieldcraft-ngsolve/bridge
-cp "$bridge/samples/slab.json" .
+cp "$bridge"/samples/* .
 fieldcraft-ngsolve-cli run slab.json
-fieldcraft-ngsolve slab.fieldcraft "$bridge/samples/potential.py" first-run --materials dielectric --boundaries left right wall
-fieldcraft-ngsolve-gui --control 7070
+fieldcraft-ngsolve case slab.case.json first-run --gui /usr/bin/fieldcraft-ngsolve-gui
 ```
 
 Windows PowerShell, using the default installation path:
 
 ```powershell
 $fc = Join-Path $env:LOCALAPPDATA 'Programs/FieldCraft-NGSolve'
-Copy-Item "$fc/bridge/samples/slab.json" .
+Copy-Item "$fc/bridge/samples/*" .
 & "$fc/fieldcraft-cli.exe" run slab.json
-& "$fc/fieldcraft-ngsolve.cmd" slab.fieldcraft "$fc/bridge/samples/potential.py" first-run --materials dielectric --boundaries left right wall
-& "$fc/fieldcraft.exe" --control 7070
+& "$fc/fieldcraft-ngsolve.cmd" case slab.case.json first-run --gui "$fc/fieldcraft.exe"
 ```
 
-In a second terminal, call the installed Python executable with `bridge/show_run.py first-run --port 7070 --field potential --integrals --open-model`. The interpreter is `python/python.exe` under the Windows installation or `/opt/fieldcraft-ngsolve/python/bin/python3` on Linux. Replace the example Python file with your own formulation and select the sets defined by your FieldCraft model.
+The case file records the input model, script, named materials and boundaries, and preferred field. Change those entries for another example. To run a different NGSolve installation, pass its interpreter with `--python /path/to/python` or `--python C:\path\to\python.exe`. Running the case without `--gui` writes the fields and integrals for later viewing. Use `bridge/show_run.py` with the private interpreter to select an existing desktop instance or another field.
 
 ## Build and verification
 
