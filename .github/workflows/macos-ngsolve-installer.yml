@@ -1,0 +1,81 @@
+name: macOS NGSolve installers
+
+on:
+  push:
+    branches: [codex/macos-ngsolve-installer]
+  workflow_dispatch:
+    inputs:
+      application_ref:
+        description: Application revision to package (needs external contours and integral results)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.arch }} installer and solver
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            arch: x86_64
+            rust_target: x86_64-apple-darwin
+            package_arch: x86_64
+          - os: macos-15
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            package_arch: aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The demonstration fork builds the reviewed integration candidate separately
+      # from installer-only changes. Other repositories package the selected ref.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.application_ref || (github.repository == 'JohannesMaierhofer/fieldcraft' && '0720c2111fd220f0e5f2267a96c068a6d38413a2') || github.sha }}
+          path: application
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1 # rust-toolchain.toml
+        with:
+          targets: ${{ matrix.rust_target }}
+      - name: Build native FieldCraft and its CLI
+        working-directory: application
+        env:
+          PACKAGE_ARCH: ${{ matrix.package_arch }}
+        run: |
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/target"
+          test "$(uname -m)" = '${{ matrix.arch }}'
+          cargo xtask licences
+          packaging/macos/package.sh --arch "$PACKAGE_ARCH"
+      - name: Build the product, exercise its install script and solve the bundled example
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          app="$RUNNER_TEMP/target/macos-package/FieldCraft.app"
+          mkdir -p dist
+          packaging/macos/ngsolve-package.sh --arch "$ARCH" --app "$app" --output "dist/FieldCraft-NGSolve-$ARCH.pkg"
+          pkgutil --expand "dist/FieldCraft-NGSolve-$ARCH.pkg" "$RUNNER_TEMP/installer"
+          scripts="$RUNNER_TEMP/installer/runtime.pkg/Scripts"
+          volume="$RUNNER_TEMP/test-volume"
+          mkdir -p "$volume"
+          "$scripts/postinstall" unused unused "$volume"
+          home="$volume/Library/Application Support/FieldCraft/NGSolve"
+          cli="$app/Contents/MacOS/fieldcraft-cli"
+          mkdir -p "$RUNNER_TEMP/slab"
+          cd "$RUNNER_TEMP/slab"
+          cp "$home/bridge/samples/slab.json" .
+          "$cli" run slab.json
+          "$home/python/bin/python3" "$home/bridge/workflow.py" slab.fieldcraft "$home/bridge/samples/potential.py" result --materials dielectric --boundaries left right wall
+          "$cli" run result/view-1.json
+          "$home/python/bin/python3" -I -c 'import json,math; q=json.load(open("result/results.json"))["integrals"][0]; assert q["name"]=="stored_energy" and math.isclose(q["value"],4.4270939064e-14,rel_tol=1e-9),q'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fieldcraft-ngsolve-macos-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/FieldCraft-NGSolve-*.pkg
+          if-no-files-found: error
