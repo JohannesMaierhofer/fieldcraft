@@ -104,12 +104,20 @@ jobs:
             fieldcraft-ngsolve-cli run slab.json
             fieldcraft-ngsolve case slab.case.json first-run
           '
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - name: Upload native window captures and numerical verification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: fieldcraft-ngsolve-${{ matrix.label }}
+          name: fieldcraft-ngsolve-${{ matrix.label }}-verification
           path: |
-            dist/ngsolve/*
             verification/*.json
             verification/*.png
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload the offline installer and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-ngsolve-${{ matrix.label }}
+          path: dist/ngsolve/*
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
