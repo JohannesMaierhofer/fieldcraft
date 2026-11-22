@@ -47,6 +47,14 @@ jobs:
           test "$(uname -m)" = '${{ matrix.arch }}'
           cargo xtask licences
           packaging/macos/package.sh --arch "$PACKAGE_ARCH"
+      - name: Publish the verified desktop DMG
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-desktop-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/release/fieldcraft-*-macos-*.dmg
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Install the native product and solve the bundled electric slab
         env:
           ARCH: ${{ matrix.arch }}
