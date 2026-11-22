@@ -1,0 +1,69 @@
+name: External solver installers
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/cross-platform-ngsolve-installers]
+    paths:
+      - .github/workflows/ngsolve-platforms.yml
+      - packaging/ngsolve/**
+permissions:
+  contents: read
+jobs:
+  package:
+    if: github.repository == 'JohannesMaierhofer/fieldcraft'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            label: windows-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      FIELDCRAFT_TELEMETRY: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check out the GUI and CLI with mesh-bound fields and integrals
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 0720c2111fd220f0e5f2267a96c068a6d38413a2
+          path: app-source
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build FieldCraft
+        working-directory: app-source
+        run: cargo build --release --locked --target ${{ matrix.target }} -p fieldcraft -p fieldcraft-cli
+      - name: Collect FieldCraft dependency notices
+        working-directory: app-source
+        run: cargo run --release --locked -p xtask -- licences
+      - name: Assemble the offline installer
+        shell: pwsh
+        run: ./packaging/ngsolve/package.ps1 -Target '${{ matrix.target }}' -Label '${{ matrix.label }}'
+      - name: Install to a new path and run the slab through FieldCraft and NGSolve
+        shell: pwsh
+        run: ./packaging/ngsolve/verify.ps1 -Label '${{ matrix.label }}'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-ngsolve-${{ matrix.label }}
+          path: |
+            dist/ngsolve/*
+            verification/*.json
+            verification/*.png
+          if-no-files-found: error
+          retention-days: 14

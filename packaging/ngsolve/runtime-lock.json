@@ -1,0 +1,76 @@
+{
+  "windows": {
+    "runtime": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "sha256": "2e0fed09d48989f64c9305da9ff2d37a41c0d13ab2aa6283405b2b620dfbf805"
+    },
+    "wheels": [
+      {
+        "name": "netgen_mesher-6.2.2608-cp313-cp313-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/f8/5a/08faac1e5fdb86827aa44560939e463b8501120c2485e0c4aebab1853d47/netgen_mesher-6.2.2608-cp313-cp313-win_amd64.whl",
+        "sha256": "ac943f090d8c7a60de541ba5560ee51b876acc02d02a4cc25b7ae12ecd49e291"
+      },
+      {
+        "name": "netgen_occt-7.8.1-py3-none-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/00/6f/9e838c4e4445aa0dddff2501e7744787c941635b99589d968db14b1b20a2/netgen_occt-7.8.1-py3-none-win_amd64.whl",
+        "sha256": "f701705183832cf2497c6c9339886d95dede7be63187f06be89fa146f6463d09"
+      },
+      {
+        "name": "ngsolve_openblas-0.3.33-py3-none-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/0a/5f/2c0fc3c56758f9790fd7bbf576734432c04c6c40a4d336821229b89b1fcc/ngsolve_openblas-0.3.33-py3-none-win_amd64.whl",
+        "sha256": "7f117cc2c92cc13dbba0a7d80cc7a5633e4a2bd6d701ea8143cb0dfe7e1b973f"
+      },
+      {
+        "name": "ngsolve-6.2.2608-cp313-cp313-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/9d/03/8613e74865af5a485d354892d90b95f848395a33438d9863dc5204122f07/ngsolve-6.2.2608-cp313-cp313-win_amd64.whl",
+        "sha256": "c4806677a4e3eea816f7a03cbe3062c8d85e519e4874fbd2c7612572ce9d5a65"
+      },
+      {
+        "name": "numpy-2.3.5-cp313-cp313-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/0c/88/e2eaa6cffb115b85ed7c7c87775cb8bcf0816816bc98ca8dbfa2ee33fe6e/numpy-2.3.5-cp313-cp313-win_amd64.whl",
+        "sha256": "00dc4e846108a382c5869e77c6ed514394bdeb3403461d25a829711041217d5b"
+      }
+    ]
+  },
+  "linux": {
+    "runtime": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "f2d2199eb25880e07863b391cf7124e7ffa1338b0d65600dfcec117c4223a7fb"
+    },
+    "wheels": [
+      {
+        "name": "netgen_mesher-6.2.2608-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/b9/1e/64d73fd5a97813c86d1267b9f362e405f166854604c9d8d9699615f18ffe/netgen_mesher-6.2.2608-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "sha256": "d8118835e2aec5739ee5755d61e866505313d92e3d4c6b947be7835f9fbf5122"
+      },
+      {
+        "name": "netgen_occt-7.8.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/2a/9e/dbe6b538248f6e2d7c2972cdf9aa59e2904505c4a345fcd6cfcfe1841f9f/netgen_occt-7.8.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "sha256": "db71d77f56f79c0768489e76dde8febdeb25b95777986587a5d09575fa112f94"
+      },
+      {
+        "name": "ngsolve_openblas-0.3.33-py3-none-manylinux_2_17_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/08/45/60d2124e32f2f07b2f3822f6325dd6bb60b42f743d73906ea93aa2db9a48/ngsolve_openblas-0.3.33-py3-none-manylinux_2_17_x86_64.whl",
+        "sha256": "8d3266615c7b099e78c5891a41971c6bffe5d6014d13d736cef0cc119d1ca141"
+      },
+      {
+        "name": "ngsolve-6.2.2608-cp313-cp313-manylinux_2_28_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/61/25/432fd37a2671fcffa13d6958fd04363d2d8a27c2dd0c1b3dcef2857a1cb4/ngsolve-6.2.2608-cp313-cp313-manylinux_2_28_x86_64.whl",
+        "sha256": "4e02591fe98a1068b4f7ca094aec36844da1f6ddf826088b060e5a8e7780efff"
+      },
+      {
+        "name": "numpy-2.3.5-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/f5/10/ca162f45a102738958dcec8023062dad0cbc17d1ab99d68c4e4a6c45fb2b/numpy-2.3.5-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "sha256": "11e06aa0af8c0f05104d56450d6093ee639e15f24ecf62d417329d06e522e017"
+      }
+    ]
+  },
+  "bridge": {
+    "url": "https://codeload.github.com/JohannesMaierhofer/fieldcraft-ngsolve/zip/0b304e46cc299e9c5906a0fc51b052ef2df0f37f",
+    "sha256": "2f0df9d48ca26e528ac8dfaf78623e738006d459031d8be415a18d1da2b4d5ba"
+  },
+  "inno": {
+    "url": "https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe",
+    "sha256": "a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c"
+  }
+}

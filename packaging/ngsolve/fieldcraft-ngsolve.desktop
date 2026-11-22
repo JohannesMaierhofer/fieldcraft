@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=FieldCraft with NGSolve
+Exec=fieldcraft-ngsolve-gui %F
+Icon=fieldcraft-ngsolve
+Terminal=false
+Categories=Science;Engineering;
