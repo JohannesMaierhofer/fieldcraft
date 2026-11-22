@@ -18,7 +18,17 @@ if ($trusted.name -ne 'External solver installers' -or $trusted.head_sha -ne $he
     throw 'Previous installer run provenance differs from the selected build.'
 }
 $wanted = "fieldcraft-ngsolve-$Label"
-$found = (gh api "repos/$repository/actions/runs/$run/artifacts" | ConvertFrom-Json).artifacts | Where-Object { $_.name -eq $wanted -and -not $_.expired }
+$found = $null
+for ($attempt = 0; $attempt -lt 80; $attempt++) {
+    $found = (gh api "repos/$repository/actions/runs/$run/artifacts" | ConvertFrom-Json).artifacts |
+        Where-Object { $_.name -eq $wanted -and -not $_.expired }
+    if ($found) { break }
+    $job = (gh api "repos/$repository/actions/runs/$run/jobs" | ConvertFrom-Json).jobs |
+        Where-Object { $_.name.EndsWith(", $Label)") }
+    if (-not $job -or $job.status -eq 'completed') { break }
+    Write-Output "Waiting for the current $Label native build before reusing its binaries."
+    Start-Sleep -Seconds 45
+}
 if (-not $found) {
     "restored=false" >> $env:GITHUB_OUTPUT
     return
