@@ -1,0 +1,60 @@
+name: Verify direct STEP and IGES import
+on:
+  push:
+    branches: [codex/verify-step-import]
+permissions:
+  contents: read
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_TERM_COLOR: never
+jobs:
+  cad:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Geometry and placement regressions
+        run: cargo test --locked -p fieldcraft-geometry --lib
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          cache-on-failure: true
+      - run: cargo fmt --all --check
+      - name: Install desktop libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libudev-dev libasound2-dev libxkbcommon-x11-dev libvulkan-dev libgtk-3-dev xvfb xauth mesa-vulkan-drivers
+      - name: Run STEP GUI and embedded geometry regression tests
+        run: cargo test --locked -p fieldcraft-engine -p fieldcraft-ui-egui --lib step_
+      - name: Build GUI, CLI and an original SolidCraft assembly
+        run: |
+          cargo build --locked -p fieldcraft -p fieldcraft-cli
+          cargo run --locked -p fieldcraft-geometry --example step_for_verification -- "$RUNNER_TEMP/pair.STP"
+          target/debug/fieldcraft-cli features > "$RUNNER_TEMP/features.md"
+          diff -u docs/features.md "$RUNNER_TEMP/features.md"
+      - name: Open the assembly and capture the native window
+        env:
+          FIELDCRAFT_TELEMETRY: '0'
+        run: xvfb-run -a python3 .github/step-verification/desktop.py "$RUNNER_TEMP/pair.STP"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: step-gui-evidence
+          path: verification/
+      - name: Check all touched Rust crates
+        run: cargo clippy --locked -p fieldcraft-geometry -p fieldcraft-engine -p fieldcraft-ui-egui -p fieldcraft --all-targets -- -D warnings
+      - name: Run the touched crate suites
+        run: cargo test --locked -p fieldcraft-geometry -p fieldcraft-engine -p fieldcraft-ui-egui -p fieldcraft
