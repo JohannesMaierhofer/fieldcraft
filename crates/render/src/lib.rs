@@ -14,6 +14,7 @@ mod display;
 pub mod flow;
 mod font;
 pub mod glyphs;
+pub mod nodal;
 pub mod pick;
 mod raster;
 mod vec;

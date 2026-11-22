@@ -524,6 +524,10 @@ fn picture(s: &Session, p: &Palette, section: Option<Section>, toward: Vec3) -> 
         if let Some(marks) = geometry_marks(s) {
             draw_geometry_marks(&mut scene, &base, &drawn, marks, base.tris.is_empty(), p.marked);
         }
+        if let Some(field) = s.external_contour() {
+            field.draw(&base, &mut scene, &p.contour, p.contour_over, p.no_result);
+            shown.contour = Some((field.title.clone(), field.min, field.max));
+        }
         let bounds = base.bounds;
         let shows = |n: &str| s.shows(fieldcraft_io::ItemKind::Datum, n);
         let datums = fieldcraft_render::glyphs::datums(&s.model, &base.bounds, &shows, None, &p.glyphs, &mut scene);

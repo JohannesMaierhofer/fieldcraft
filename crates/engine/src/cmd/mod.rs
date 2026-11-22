@@ -239,6 +239,7 @@ pub static ALL: &[CommandSpec] = &[
     solve::PROBE,
     results::DEFORMED,
     results::CONTOUR,
+    crate::external::CONTOUR,
     results::MODES,
     results::ANIMATE,
     results::FRAME,

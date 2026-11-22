@@ -27,6 +27,7 @@ pub use cmd::update::enable_checks as enable_update_checks;
 /// Write an output (a picture, an export) where a user named, never over a model or design.
 pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
+pub mod external;
 pub mod history;
 pub mod linearise;
 pub mod path;
@@ -312,6 +313,8 @@ impl Default for Limits {
 #[derive(Debug, Clone, Default)]
 pub struct Session {
     pub model: Model,
+    /// Optional verified nodal field from a separately run calculation.
+    pub(crate) external_field: Option<Arc<external::ExternalField>>,
     /// The open SolidCraft design (`geometry.open`); shared, so a snapshot costs nothing.
     pub design: Option<Arc<Design>>,
     /// Face-tagged boundary surfaces (`geometry.import.mesh`): the input to volume meshing.

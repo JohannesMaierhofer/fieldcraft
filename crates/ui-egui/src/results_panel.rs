@@ -36,6 +36,13 @@ const LABEL_PAD: egui::Vec2 = vec2(8.0, 4.0);
 /// Draw the legend, the extremes' markers and the probe when a results plot is shown. A click
 /// on the legend's Max or Min line turns the view to that node and probes it.
 pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
+    if let Some(field) = app.session.external_contour() {
+        let painter = ui.painter_at(rect);
+        let area = crate::viewport::beside_card(app, rect);
+        let title = format!("{}   {} … {}", field.title, number(field.min.1), number(field.max.1));
+        painter.text(area.left_top() + vec2(10., 10.), Align2::LEFT_TOP, title, FontId::proportional(14.), t.overlay_text);
+        return;
+    }
     let Some(plot) = app.plot() else { return };
     let painter = ui.painter_at(rect);
     let bar = crate::viewport::selection_bar_rect(ui.ctx());

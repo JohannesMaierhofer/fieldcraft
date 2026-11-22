@@ -1283,6 +1283,7 @@ impl ModelApp {
         let plot = self.plot.1.as_ref().map(|p| Arc::as_ptr(p) as usize);
         let marks = fieldcraft_engine::view::geometry_marks(&self.session).map(|m| m as *const _ as usize);
         (self.revision, self.ui.style, self.ui.show(), self.ui.dark, plot, self.selected_datum(), marks).hash(&mut h);
+        self.session.external_contour().map(|f| f.display_id).hash(&mut h);
         format!("{:?}", self.datum_preview()).hash(&mut h);
         h.finish()
     }
@@ -1340,6 +1341,11 @@ impl ModelApp {
             if self.plot.1.is_none() && show.mesh && style != scene::Style::Wireframe {
                 let marked = fieldcraft_engine::view::marked(&self.session);
                 fieldcraft_engine::view::mark(&mut s, &self.display.1, &marked, theme::rgb(t.error));
+            }
+            if show.mesh && style != scene::Style::Wireframe {
+                if let Some(field) = self.session.external_contour() {
+                    field.draw(&self.display.1, &mut s, &t.contour_stops(), theme::rgb(t.contour_over), theme::rgb(t.no_result));
+                }
             }
             // Faces merged for meshing, each one face in the warm colour where geometry faces are
             // drawn; then what Check Geometry found, in the error colour: its faces, short edges
