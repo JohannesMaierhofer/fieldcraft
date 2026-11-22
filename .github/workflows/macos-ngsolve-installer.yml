@@ -3,6 +3,9 @@ name: macOS NGSolve installers
 on:
   push:
     branches: [codex/ngsolve-installers]
+    paths-ignore:
+      - packaging/ngsolve/control
+      - .github/workflows/ngsolve-platforms.yml
   workflow_dispatch:
 permissions:
   contents: read

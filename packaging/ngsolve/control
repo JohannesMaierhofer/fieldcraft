@@ -4,7 +4,7 @@ Architecture: amd64
 Maintainer: Johannes Maierhofer <j.maierhofer@maierhofer-technology.de>
 Section: science
 Priority: optional
-Depends: libc6 (>= 2.35), libgcc-s1, libstdc++6, libx11-6, libxext6, libxrender1, libxkbcommon0, libwayland-client0, libegl1, libgl1, libglu1-mesa, libopengl0, libgomp1, libxcb1, zlib1g
+Depends: libc6 (>= 2.35), libgcc-s1, libstdc++6, libx11-6, libxext6, libxrender1, libxkbcommon0, libwayland-client0, libegl1, libgl1, libglu1-mesa, libopengl0, libgomp1, libopenblas0-pthread, libxcb1, zlib1g
 Description: FieldCraft with a private NGSolve runtime
  Model and mesh in FieldCraft, run a user-supplied Python calculation, and
  inspect its mesh-verified scalar and vector fields and integrals.
