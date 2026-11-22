@@ -2648,6 +2648,11 @@ pub const EXTERNAL_SERIES: &[Field] = &[
         .help("For a vector, show its magnitude or a signed Cartesian component. Choose Auto for a scalar.")
         .def("\"auto\""),
 ];
+pub const EXTERNAL_PLAYBACK: &[Field] = &[
+    int("frame", "Frame", 0, crate::external_series::MAX_FRAMES as i64 - 1)
+        .help("Select a recorded frame, starting at zero. Seeking pauses playback."),
+    flag("playing", "Play").help("Start or pause playback of the recorded frames. Starting at the last frame replays the series."),
+];
 pub const EXTERNAL_INTEGRALS: &[Field] = &[path("path", "Result manifest", false).help("Read integral results for the current mesh.").req()];
 pub const FILE_OPEN: &[Field] = &[path("path", "Model", false).help("The FieldCraft model file to open.").req()];
 const SAVE_RESULTS: Field = flag("results", "Keep results")
