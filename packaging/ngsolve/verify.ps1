@@ -97,11 +97,16 @@ window.with_suffix('.json').write_text(json.dumps(proof, indent=2), encoding='ut
 print(control('ui.capture', dict(path=str(window), width=1200, height=760, scale=1)))
 if window.stat().st_size < 1000:
     raise ValueError('Missing native window capture')
+# End the test through the normal app lifecycle after the final screenshot.
+if len(sys.argv) == 5 and sys.argv[4] == 'quit':
+    control('app.quit', {})
 '@
         & $python "$homeDir/bridge/show_run.py" first-run --port $port --field potential --integrals --open-model
         & $python -c $capture "$homeDir/bridge" $port "$out/window.png"
         & $python "$homeDir/bridge/show_run.py" first-run --port $port --field electric_field --component x
-        & $python -c $capture "$homeDir/bridge" $port "$out/vector.png"
+        & $python -c $capture "$homeDir/bridge" $port "$out/vector.png" quit
+        if (-not $app.WaitForExit(15000)) { throw 'FieldCraft did not close after app.quit' }
+        if ($app.ExitCode -ne 0) { throw "FieldCraft exited with code $($app.ExitCode)" }
     } finally { if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() } }
     & "$PSScriptRoot/verify-series.ps1" -Bridge "$homeDir/bridge" -Python $python -Cli $cli -Gui $gui -Launcher $launcher -OutputDir $out
 } finally {
