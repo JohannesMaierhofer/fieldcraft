@@ -8,6 +8,22 @@ thing published without a maintainer is the nightly pre-release of `develop`
 ([Nightly builds](#nightly-builds)). The workflow is `.github/workflows/release.yml`; the packaging scripts
 are in `packaging/` and run the same way on a developer machine.
 
+## Building on Intel macOS
+
+Run the **Intel macOS packages** workflow on the desired branch or tag to build on a native
+x86_64 runner. Download the artifact named `fieldcraft-macos-x86_64-<commit>` from the workflow
+run. It contains an ad-hoc signed app disk image and a standalone CLI zip. The packaging script
+mounts the image, verifies both executable architectures and signatures, checks their versions,
+and runs the CLI command registry. Install subsequent Intel builds manually from their artifacts.
+
+To reproduce the packages on an Intel Mac, install the Rust toolchain from
+`rust-toolchain.toml` and Xcode Command Line Tools, then run these commands.
+
+```sh
+cargo xtask licences
+packaging/macos/package.sh --arch x86_64
+```
+
 ## What a release contains
 
 | Platform | Files | Script |
