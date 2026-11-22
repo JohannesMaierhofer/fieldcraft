@@ -2268,7 +2268,9 @@ impl ModelApp {
 
     /// Per-frame logic before layout: theme, camera projection, control requests, screenshots.
     pub fn logic(&mut self, ctx: &egui::Context) {
-        self.now = ctx.input(|i| i.time);
+        let now = ctx.input(|i| i.time);
+        self.session.advance_external_series(now - self.now);
+        self.now = now;
         if self.styled != Some(self.ui.dark) {
             theme::apply(ctx, self.ui.dark);
             self.styled = Some(self.ui.dark);
@@ -2292,7 +2294,7 @@ impl ModelApp {
             ctx.request_repaint();
         }
         // Results coming up (a solve, a results command) bring the Results tab.
-        let shown = self.session.results_view.is_some();
+        let shown = self.session.results_view.is_some() || self.session.external_contour().is_some();
         if shown && !self.results_shown {
             self.ui.select_tab(Tab::Results);
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::IfOffscreen);
@@ -2317,7 +2319,7 @@ impl ModelApp {
         if self.selected_seed.as_ref().is_some_and(|edge| self.seed(edge).is_none()) {
             self.selected_seed = None;
         }
-        if self.session.results_view.as_ref().is_some_and(|v| v.animate) {
+        if self.session.results_view.as_ref().is_some_and(|v| v.animate) || self.session.external_series().is_some_and(|s| s.playing()) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(results::PERIOD / results::FRAMES as f64));
         }
         self.screenshots(ctx);

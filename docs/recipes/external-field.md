@@ -36,3 +36,20 @@ The file limit is 64 MiB. Keep the source VTU beside this view file for access t
 Use **Results → Query → External Integrals** and select the external run manifest to inspect resultant quantities. The command reply lists each name, value and unit. The same operation is available to scripts as `results.external.integrals {"path":"results.json"}`. The manifest supplies `format: "fieldcraft-external-run/1"`, `mesh_sha256`, and an `integrals` array. Each quantity carries a unique name, unit and one finite real value or three Cartesian components.
 
 On the Results tab, **External Field** opens a nodal sidecar and selects its scalar value, vector magnitude or Cartesian component. **External Integrals** opens the matching run manifest and shows the signed scalar and vector quantities with their units in the reply panel. Both commands verify the current mesh before displaying data.
+
+### Play a time series
+
+Choose **Results → External Time Series**, open the series and select a component. The first frame appears on the original mesh. The playback card shows the recorded time in seconds. The slider selects a recorded frame and pauses. Play traverses the physical time interval in four display seconds, preserving the relative timing of irregular samples. All frames share the same colour scale for the chosen component.
+
+External programs can use `results.external.series {"path":"B.series.json","component":"y"}`, then `results.external.playback {"playing":true}` or `{"frame":2}` (zero-based). Each entry identifies one sibling nodal-field file as described above.
+
+```json
+{
+  "format": "fieldcraft-nodal-series/1",
+  "mesh_sha256": "<mesh.bin SHA-256>",
+  "name": "B", "unit": "T", "components": 3, "time_unit": "s",
+  "frames": [{"time": 0.0, "file": "B0.json"}, {"time": 0.002, "file": "B1.json"}]
+}
+```
+
+Provide 2–4,096 frames in strictly increasing time order, with identical node labels, mesh fingerprint, field name, unit and component count. The viewer preloads and validates the series before replacing the current overlay. The limits are 8,388,608 node samples across all frames, 64 MiB per frame file and 256 MiB of frame files in total.

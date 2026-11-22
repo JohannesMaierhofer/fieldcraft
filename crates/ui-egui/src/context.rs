@@ -32,6 +32,7 @@ pub fn has_context(app: &mut ModelApp) -> bool {
         || app.selected_seed.is_some()
         || app.selected_mesh
         || app.reply.is_some()
+        || app.session.external_series().is_some()
         || app.plot().is_some()
 }
 
@@ -51,6 +52,7 @@ enum Info {
     Seed(fieldcraft_model::GeometryRef),
     Mesh,
     Results(std::sync::Arc<crate::results::Plot>),
+    ExternalSeries,
 }
 
 impl Card {
@@ -72,6 +74,7 @@ impl Info {
             Info::Seed(_) => "context:seed",
             Info::Mesh => "context:mesh",
             Info::Results(_) => "context:results",
+            Info::ExternalSeries => "context:external-series",
         }
     }
 
@@ -86,6 +89,7 @@ impl Info {
             Info::Seed(_) => ("mesh.seed.edge".into(), "Seed".into()),
             Info::Mesh => ("mesh.tet.generate".into(), "Mesh".into()),
             Info::Results(_) => ("results.deformed".into(), "Results".into()),
+            Info::ExternalSeries => ("results.animate".into(), "External Time Series".into()),
         }
     }
 }
@@ -163,6 +167,7 @@ fn cards(app: &mut ModelApp) -> Vec<Card> {
     let mut out: Vec<Card> = first.into_iter().collect();
     match app.plot() {
         Some(plot) if !reply_beside_form => out.push(Card::Info(Info::Results(plot))),
+        _ if !reply_beside_form && app.session.external_series().is_some() => out.push(Card::Info(Info::ExternalSeries)),
         _ => out.extend(ranked.next()),
     }
     out
@@ -269,6 +274,7 @@ fn body(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, card: &Info) {
         Info::Seed(edge) => seed_card(app, ui, edge.clone()),
         Info::Mesh => mesh_card(app, ui, t),
         Info::Results(plot) => crate::results_panel::controls(app, plot, ui, t),
+        Info::ExternalSeries => crate::results_panel::external_controls(app, ui),
         Info::Reply => crate::reply::show(app, ui, t),
     }
 }
@@ -281,6 +287,9 @@ fn close(app: &mut ModelApp, card: &Info) {
         Info::Seed(_) => app.selected_seed = None,
         Info::Mesh => app.selected_mesh = false,
         // Errors show in the status bar.
+        Info::ExternalSeries => {
+            let _ = app.run("results.external.contour", json!({"show": false}));
+        }
         Info::Results(_) => {
             let _ = app.run("results.clear", json!({}));
         }

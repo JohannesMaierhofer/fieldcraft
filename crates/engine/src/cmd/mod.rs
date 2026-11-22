@@ -241,6 +241,8 @@ pub static ALL: &[CommandSpec] = &[
     results::CONTOUR,
     crate::external_integrals::READ,
     crate::external::CONTOUR,
+    crate::external_series::SERIES,
+    crate::external_series::PLAYBACK,
     results::MODES,
     results::ANIMATE,
     results::FRAME,

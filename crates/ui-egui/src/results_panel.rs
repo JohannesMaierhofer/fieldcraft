@@ -39,7 +39,7 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
     if let Some(field) = app.session.external_contour() {
         let painter = ui.painter_at(rect);
         let area = crate::viewport::beside_card(app, rect);
-        let title = format!("{}   {} … {}", field.title, number(field.min.1), number(field.max.1));
+        let title = format!("{}   {} … {}", field.title, number(field.range[0]), number(field.range[1]));
         painter.text(area.left_top() + vec2(10., 10.), Align2::LEFT_TOP, title, FontId::proportional(14.), t.overlay_text);
         return;
     }
@@ -395,6 +395,35 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
     // One form: the rows share one label column, sized to the longest label; the card's body
     // insets them as every card's.
     kit::scope(ui, |ui| rows(app, plot, ui, t));
+}
+
+pub fn external_controls(app: &mut ModelApp, ui: &mut egui::Ui) {
+    let Some(series) = app.session.external_series() else { return };
+    let (mut frame, count, playing, time) = (series.frame(), series.count(), series.playing(), series.frame_time());
+    let mut command = None;
+    kit::scope(ui, |ui| {
+        kit::row(ui, "Time", |ui| {
+            ui.label(format!("{} s", number(time)));
+        });
+        kit::row(ui, "Frame", |ui| {
+            if kit::slider(
+                ui,
+                &mut frame,
+                0..=count.saturating_sub(1),
+                kit::Slider { integer: true, format: |v| format!("{v:.0}"), ..Default::default() },
+            )
+            .changed()
+            {
+                command = Some(json!({"frame": frame}));
+            }
+        });
+        if kit::button(ui, if playing { "Pause" } else { "Play" }, kit::Button::Normal).clicked() {
+            command = Some(json!({"playing": !playing}));
+        }
+    });
+    if let Some(params) = command {
+        let _ = app.run("results.external.playback", params);
+    }
 }
 
 fn rows(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) {

@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run their command; **coming s
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-99 ready, 27 coming soon.
+100 ready, 27 coming soon.
 
 ## Geometry
 
@@ -152,6 +152,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Display | Deformed — The deformed shape of a solved step, to scale | ready | `results.deformed`, `results.clear` |
 | Display | Contours — Contours of displacement and stress, with a legend | ready | `results.contour` |
 | Display | External Field — Show a scalar or vector field on the original mesh | ready | `results.external.contour` |
+| Display | External Time Series — Play recorded scalar or vector fields on the original mesh | ready | `results.external.series`, `results.external.playback` |
 | Display | Mode Shapes — Mode shapes and frequencies of a frequency step | ready | `results.modes` |
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |
 | Query | External Integrals — Named scalar and vector integrals from an external solver on this mesh | ready | `results.external.integrals` |
