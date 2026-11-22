@@ -44,20 +44,21 @@ jobs:
           test "$(uname -m)" = '${{ matrix.arch }}'
           cargo xtask licences
           packaging/macos/package.sh --arch "$PACKAGE_ARCH"
-      - name: Build the product, exercise its install script and solve the bundled example
+      - name: Install the native product and solve the bundled electric slab
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           app="$RUNNER_TEMP/target/macos-package/FieldCraft.app"
           mkdir -p dist
           packaging/macos/ngsolve-package.sh --arch "$ARCH" --app "$app" --output "dist/FieldCraft-NGSolve-$ARCH.pkg"
-          pkgutil --expand "dist/FieldCraft-NGSolve-$ARCH.pkg" "$RUNNER_TEMP/installer"
-          scripts="$RUNNER_TEMP/installer/runtime.pkg/Scripts"
-          volume="$RUNNER_TEMP/test-volume"
-          mkdir -p "$volume"
-          "$scripts/postinstall" unused unused "$volume"
-          home="$volume/Library/Application Support/FieldCraft/NGSolve"
+          sudo /usr/sbin/installer -pkg "dist/FieldCraft-NGSolve-$ARCH.pkg" -target /
+          pkgutil --pkg-info org.tangency-labs.fieldcraft.ngsolve-runtime
+          pkgutil --pkg-info org.tangency-labs.fieldcraft.app
+          home="/Library/Application Support/FieldCraft/NGSolve"
+          app=/Applications/FieldCraft.app
           cli="$app/Contents/MacOS/fieldcraft-cli"
+          lipo "$cli" -verify_arch "$ARCH"
+          "$home/python/bin/python3" -I -c 'import platform,sys; assert platform.machine() == sys.argv[1]' "$ARCH"
           mkdir -p "$RUNNER_TEMP/slab"
           cd "$RUNNER_TEMP/slab"
           cp "$home/bridge/samples/"* .
@@ -67,6 +68,21 @@ jobs:
           jq --arg path "$PWD/result/results.json" '. + [{"command":"results.external.integrals","params":{"path":$path}}]' result/view-2.json > result/view-vector-and-integrals.json
           "$cli" run result/view-vector-and-integrals.json
           "$home/python/bin/python3" -I -c 'import json,math; q=json.load(open("result/results.json"))["integrals"][0]; assert q["name"]=="stored_energy" and math.isclose(q["value"],4.4270939064e-14,rel_tol=1e-9),q'
+      - name: Solve the transient slab and check native playback
+        shell: pwsh
+        run: |
+          $fcRuntime = '/Library/Application Support/FieldCraft/NGSolve'
+          $fcApp = '/Applications/FieldCraft.app/Contents/MacOS'
+          ./packaging/ngsolve/verify-series.ps1 -Bridge "$fcRuntime/bridge" -Python "$fcRuntime/python/bin/python3" -Cli "$fcApp/fieldcraft-cli" -Gui "$fcApp/FieldCraft" -Launcher "$fcRuntime/fieldcraft-ngsolve" -OutputDir "$PWD/verification"
+      - name: Upload measured time series, playback states and window captures
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-ngsolve-macos-${{ matrix.arch }}-verification
+          path: |
+            verification/*.json
+            verification/*.png
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fieldcraft-ngsolve-macos-${{ matrix.arch }}-${{ github.sha }}

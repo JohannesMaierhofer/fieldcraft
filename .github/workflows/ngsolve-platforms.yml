@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 240
     env:
       CARGO_BUILD_JOBS: '2'
+      CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
       CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
@@ -76,7 +77,7 @@ jobs:
       - name: Assemble the offline installer
         shell: pwsh
         run: ./packaging/ngsolve/package.ps1 -Target '${{ matrix.target }}' -Label '${{ matrix.label }}'
-      - name: Install to a new path and run the slab through FieldCraft and NGSolve
+      - name: Install, solve the electric slab and exercise native transient playback
         shell: pwsh
         run: ./packaging/ngsolve/verify.ps1 -Label '${{ matrix.label }}'
       - name: Install the Debian package in a minimal Ubuntu 22.04 image

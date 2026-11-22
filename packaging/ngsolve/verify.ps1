@@ -103,6 +103,7 @@ if window.stat().st_size < 1000:
         & $python "$homeDir/bridge/show_run.py" first-run --port $port --field electric_field --component x
         & $python -c $capture "$homeDir/bridge" $port "$out/vector.png"
     } finally { if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() } }
+    & "$PSScriptRoot/verify-series.ps1" -Bridge "$homeDir/bridge" -Python $python -Cli $cli -Gui $gui -Launcher $launcher -OutputDir $out
 } finally {
     Pop-Location
     if ($xserver -and -not $xserver.HasExited) { $xserver.Kill() }
