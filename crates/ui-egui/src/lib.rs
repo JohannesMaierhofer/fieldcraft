@@ -1342,10 +1342,11 @@ impl ModelApp {
                 let marked = fieldcraft_engine::view::marked(&self.session);
                 fieldcraft_engine::view::mark(&mut s, &self.display.1, &marked, theme::rgb(t.error));
             }
-            if show.mesh && style != scene::Style::Wireframe {
-                if let Some(field) = self.session.external_contour() {
-                    field.draw(&self.display.1, &mut s, &t.contour_stops(), theme::rgb(t.contour_over), theme::rgb(t.no_result));
-                }
+            if show.mesh
+                && style != scene::Style::Wireframe
+                && let Some(field) = self.session.external_contour()
+            {
+                field.draw(&self.display.1, &mut s, &t.contour_stops(), theme::rgb(t.contour_over), theme::rgb(t.no_result));
             }
             // Faces merged for meshing, each one face in the warm colour where geometry faces are
             // drawn; then what Check Geometry found, in the error colour: its faces, short edges
