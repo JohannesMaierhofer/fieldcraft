@@ -165,6 +165,30 @@ fn every_page_is_reachable_from_the_list_and_through_search() {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn external_analysis_actions_open_python_settings_and_the_workspace() {
+    use fieldcraft_engine::catalogue::{Tab, Workspace};
+
+    let prefs = Temp::new("python");
+    let mut app = app(&prefs);
+    app.start_programmatic("ui.python.settings").unwrap();
+    assert_eq!((app.ui.workspace, app.ui.tab), (Workspace::ExternalAnalysis, Tab::ExternalAnalysis));
+    assert_eq!(super::describe(&app)["page"], "python");
+    assert_eq!(app.python_workspace.inspect()["open"], false);
+
+    let update = json!({"set": {"python_interpreter": "/opt/example/python3", "python_bridge": "/opt/example/bridge"}});
+    assert_eq!(super::from_control(&mut app, &update).unwrap()["values"]["python_interpreter"], "/opt/example/python3");
+    assert_eq!(Prefs::load(app.services.prefs.as_ref()).python_bridge, "/opt/example/bridge");
+    assert_eq!(super::from_control(&mut app, &json!({"press": "cancel"})).unwrap()["values"]["python_interpreter"], "");
+    assert!(Prefs::load(app.services.prefs.as_ref()).python_bridge.is_empty());
+
+    app.start_programmatic("ui.python").unwrap();
+    let workspace = app.python_workspace.inspect();
+    assert_eq!(workspace["open"], true);
+    assert_eq!(workspace["detached"], false);
+}
+
 /// Cancel puts back what the window found, through every setter: the units, History's dock and a
 /// usage question never answered, changed by clicks and by `ui.settings`; on screen, in the
 /// session, in recording and on disk.

@@ -343,6 +343,11 @@ pub struct Prefs {
     pub history_dock: crate::shell::HistoryDock,
     /// Show the Discord link in the title bar ([`crate::links`]).
     pub show_discord_button: bool,
+    /// Optional overrides for the installer-provided Python interpreter and bridge.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub python_interpreter: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub python_bridge: String,
 }
 
 /// A preference as saved, or its default when this version cannot read it (a value a newer
@@ -370,6 +375,10 @@ impl Default for Prefs {
             status_bar: false,
             history_dock: crate::shell::HistoryDock::default(),
             show_discord_button: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            python_interpreter: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            python_bridge: String::new(),
         }
     }
 }
@@ -1740,7 +1749,7 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     if row(ui, "ui.python", "Python Workspace…", None) {
-        act = Some(Box::new(|app| app.python_workspace.open(app.session.path.as_deref())));
+        act = Some(Box::new(|app| app.open_python_workspace()));
     }
     // Each group behind a rule, as the others.
     crate::frame::menu_separator(ui);

@@ -1,9 +1,8 @@
 //! The capability catalogue: everything FieldCraft does or will do, in one table.
 //!
 //! Each [`Capability`] is a toolbar entry: its tab and panel, its label and one-line tip, and
-//! either the command of the same id it runs ([`Status::Ready`]) or the milestone that brings it
-//! ([`Status::Planned`], shown greyed as "Coming soon"). Planned entries are not commands: a
-//! command always runs. The icon of an entry is `assets/icons/<id>.svg`.
+//! the engine command or desktop action it runs, or the milestone that brings it. The icon of
+//! an entry is `assets/icons/<id>.svg` or an alias of a kit icon.
 //!
 //! Every registered command is claimed here, as an entry's command or as one of its related
 //! commands ([`Capability::more`], the entry's drop-down); the tests check it. A new command
@@ -28,12 +27,26 @@ pub enum Tab {
     Interactions,
     Solve,
     Results,
+    #[cfg(not(target_arch = "wasm32"))]
+    ExternalAnalysis,
     Tools,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 10] =
-        [Tab::Geometry, Tab::Mesh, Tab::Properties, Tab::Assembly, Tab::Steps, Tab::Loads, Tab::Interactions, Tab::Solve, Tab::Results, Tab::Tools];
+    pub const ALL: [Tab; if cfg!(target_arch = "wasm32") { 10 } else { 11 }] = [
+        Tab::Geometry,
+        Tab::Mesh,
+        Tab::Properties,
+        Tab::Assembly,
+        Tab::Steps,
+        Tab::Loads,
+        Tab::Interactions,
+        Tab::Solve,
+        Tab::Results,
+        #[cfg(not(target_arch = "wasm32"))]
+        Tab::ExternalAnalysis,
+        Tab::Tools,
+    ];
 
     /// Its id in JSON (`loads`).
     pub fn id(self) -> &'static str {
@@ -47,6 +60,8 @@ impl Tab {
             Tab::Interactions => "interactions",
             Tab::Solve => "solve",
             Tab::Results => "results",
+            #[cfg(not(target_arch = "wasm32"))]
+            Tab::ExternalAnalysis => "external_analysis",
             Tab::Tools => "tools",
         }
     }
@@ -62,6 +77,8 @@ impl Tab {
             Tab::Interactions => "Interactions",
             Tab::Solve => "Solve",
             Tab::Results => "Results",
+            #[cfg(not(target_arch = "wasm32"))]
+            Tab::ExternalAnalysis => "Python",
             Tab::Tools => "Tools",
         }
     }
@@ -81,10 +98,20 @@ pub enum Workspace {
     Analysis,
     /// Looking at results.
     Results,
+    /// Developing and running Python-based analyses in the desktop app.
+    #[cfg(not(target_arch = "wasm32"))]
+    ExternalAnalysis,
 }
 
 impl Workspace {
-    pub const ALL: [Workspace; 4] = [Workspace::Prepare, Workspace::Model, Workspace::Analysis, Workspace::Results];
+    pub const ALL: [Workspace; if cfg!(target_arch = "wasm32") { 4 } else { 5 }] = [
+        Workspace::Prepare,
+        Workspace::Model,
+        Workspace::Analysis,
+        Workspace::Results,
+        #[cfg(not(target_arch = "wasm32"))]
+        Workspace::ExternalAnalysis,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -92,6 +119,8 @@ impl Workspace {
             Workspace::Model => "Model",
             Workspace::Analysis => "Analysis",
             Workspace::Results => "Results",
+            #[cfg(not(target_arch = "wasm32"))]
+            Workspace::ExternalAnalysis => "External Analysis",
         }
     }
 
@@ -102,6 +131,8 @@ impl Workspace {
             Workspace::Model => "Materials, sections, steps, loads and boundary conditions",
             Workspace::Analysis => "Check the model, write decks and solve",
             Workspace::Results => "Deformed shapes, contours, modes and probes",
+            #[cfg(not(target_arch = "wasm32"))]
+            Workspace::ExternalAnalysis => "Develop Python analyses and view their results",
         }
     }
 
@@ -112,6 +143,8 @@ impl Workspace {
             Workspace::Model => &[Tab::Properties, Tab::Assembly, Tab::Steps, Tab::Loads, Tab::Interactions, Tab::Tools],
             Workspace::Analysis => &[Tab::Solve, Tab::Tools],
             Workspace::Results => &[Tab::Results, Tab::Tools],
+            #[cfg(not(target_arch = "wasm32"))]
+            Workspace::ExternalAnalysis => &[Tab::ExternalAnalysis, Tab::Results, Tab::Tools],
         }
     }
 
@@ -127,6 +160,8 @@ impl Workspace {
             Workspace::Model => "model.material.create",
             Workspace::Analysis => "solve.run",
             Workspace::Results => "results.contour",
+            #[cfg(not(target_arch = "wasm32"))]
+            Workspace::ExternalAnalysis => "ui.python",
         }
     }
 }
@@ -136,6 +171,8 @@ impl Workspace {
 pub enum Status {
     /// Runs the command whose id is the entry's.
     Ready,
+    /// A desktop action dispatched by the UI and addressable through `ui.start`.
+    Desktop,
     /// Coming in this roadmap milestone (`M2`…).
     Planned { milestone: &'static str },
     /// Runs `deck.write` with this `format` once `fieldcraft_decks::FORMATS` has a writer for it;
@@ -165,14 +202,22 @@ pub struct Capability {
 }
 
 impl Capability {
-    /// The command it runs; `None` while it is coming soon.
+    /// The engine command it runs, when the entry dispatches an engine command.
     pub fn command(&self) -> Option<&'static str> {
         match self.status {
             Status::Ready => Some(self.id),
-            Status::Planned { .. } => None,
+            Status::Desktop | Status::Planned { .. } => None,
             Status::Deck { format, .. } => fieldcraft_decks::format(format).map(|_| crate::cmd::deck::WRITE.id),
             Status::Variant { command, .. } => Some(command),
         }
+    }
+
+    pub fn desktop_action(&self) -> Option<&'static str> {
+        (self.status == Status::Desktop).then_some(self.id)
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.desktop_action().is_some() || self.command().is_some()
     }
 
     /// The parameters its command starts with (an object; empty for most entries).
@@ -182,7 +227,7 @@ impl Capability {
             Status::Variant { preset, .. } => {
                 serde_json::from_str(preset).ok().filter(serde_json::Value::is_object).unwrap_or_else(|| serde_json::json!({}))
             }
-            Status::Ready | Status::Planned { .. } => serde_json::json!({}),
+            Status::Ready | Status::Desktop | Status::Planned { .. } => serde_json::json!({}),
         }
     }
 
@@ -191,21 +236,26 @@ impl Capability {
         match self.status {
             Status::Planned { milestone } => Some(milestone),
             Status::Deck { milestone, .. } if self.command().is_none() => Some(milestone),
-            Status::Ready | Status::Deck { .. } | Status::Variant { .. } => None,
+            Status::Ready | Status::Desktop | Status::Deck { .. } | Status::Variant { .. } => None,
         }
     }
 
     /// The hover text: label and tip, or when it comes.
     pub fn tooltip(&self) -> String {
-        match (self.command(), self.milestone()) {
-            (Some(_), _) => format!("{}\n{}", self.label, self.tip),
-            (None, m) => format!("{} — coming soon ({})\n{}", self.label, m.unwrap_or("later"), self.tip),
+        match self.milestone() {
+            None => format!("{}\n{}", self.label, self.tip),
+            Some(m) => format!("{} — coming soon ({m})\n{}", self.label, self.tip),
         }
     }
 }
 
 const fn ready(id: &'static str, label: &'static str, tab: Tab, panel: &'static str, tip: &'static str) -> Capability {
     Capability { id, label, tab, panel, tip, status: Status::Ready, more: &[], covers: &[] }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const fn desktop(id: &'static str, label: &'static str, tip: &'static str) -> Capability {
+    Capability { status: Status::Desktop, ..ready(id, label, Tab::ExternalAnalysis, "Scripting", tip) }
 }
 
 const fn ready_more(
@@ -820,6 +870,11 @@ pub static CATALOGUE: &[Capability] = &[
     ),
     soon("results.read", "Read Results", Results, "Files", "M9", "Read results in public formats"),
     soon("results.convergence", "Convergence", Results, "Files", "M9", "Mesh convergence studies"),
+    // ---- External Analysis ----
+    #[cfg(not(target_arch = "wasm32"))]
+    desktop("ui.python", "Open Python Workspace", "Edit and run Python scripts, cases, and selections"),
+    #[cfg(not(target_arch = "wasm32"))]
+    desktop("ui.python.settings", "Settings", "Configure the Python interpreter, NGSolve bridge, and project packages"),
     // ---- Tools ----
     // Renaming starts from a definition's item menu (Rename…); the search finds it here too.
     ready_more("model.info", "Model Info", Tools, "Model", "Node and element counts and the model summary", &["model.rename"]),
@@ -904,12 +959,12 @@ pub fn panels(tab: Tab) -> impl Iterator<Item = &'static [Capability]> {
 
 /// `docs/features.md`: every capability by tab and panel, ready or coming soon.
 pub fn features_page() -> String {
-    let ready = CATALOGUE.iter().filter(|c| c.command().is_some()).count();
+    let ready = CATALOGUE.iter().filter(|c| c.is_ready()).count();
     let mut md = String::from(
         "# Features\n\n\
          Generated from the capability catalogue (`crates/engine/src/catalogue.rs`) by\n\
          `cargo run -p fieldcraft-cli -- features > docs/features.md`; a test fails when it is out of date.\n\
-         Every entry is a toolbar button. **Ready** entries run their command; **coming soon** entries are\n\
+         Every entry is a toolbar button. **Ready** entries run an engine command or a desktop action. **Coming soon** entries are\n\
          shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,\n\
          the control channel and AI agents over MCP (docs/mcp.md) run the same commands.\n\n",
     );
@@ -919,8 +974,10 @@ pub fn features_page() -> String {
         for c in tab_entries(tab) {
             let status = c.milestone().map_or_else(|| "ready".to_string(), |m| format!("coming soon ({m})"));
             let preset = c.preset();
-            let main =
-                c.command().map(|id| if preset.as_object().is_some_and(|o| !o.is_empty()) { format!("`{id} {preset}`") } else { format!("`{id}`") });
+            let main = c.command().map_or_else(
+                || c.desktop_action().map(|id| format!("`ui.start({id})`")),
+                |id| Some(if preset.as_object().is_some_and(|o| !o.is_empty()) { format!("`{id} {preset}`") } else { format!("`{id}`") }),
+            );
             let commands: Vec<String> =
                 main.into_iter().chain(c.more.iter().map(|id| format!("`{id}`"))).chain(c.covers.iter().map(|id| format!("(`{id}`)"))).collect();
             let _ = writeln!(md, "| {} | {} — {} | {status} | {} |", c.panel, c.label, c.tip, commands.join(", "));
@@ -992,12 +1049,15 @@ mod tests {
     }
 
     #[test]
-    fn every_command_is_claimed_and_every_ready_entry_runs_a_command() {
+    fn every_command_is_claimed_and_every_ready_entry_has_a_route() {
         let mut claimed: Vec<&str> = Vec::new();
         for c in CATALOGUE {
             if let Some(command) = c.command() {
                 assert!(find_command(command).is_some(), "{}: `{command}` is not a registered command", c.id);
                 claimed.push(command);
+            } else if let Some(action) = c.desktop_action() {
+                assert!(action.starts_with("ui.") && find_command(action).is_none());
+                assert!(c.is_ready() && c.more.is_empty() && c.covers.is_empty());
             } else {
                 assert!(c.more.is_empty() && c.covers.is_empty(), "{}: a planned entry has no commands", c.id);
             }
