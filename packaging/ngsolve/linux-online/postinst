@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+if [ "$1" = configure ]; then
+    /usr/bin/python3 -I -B /usr/lib/fieldcraft-ngsolve/install-runtime.py \
+        /opt/fieldcraft-ngsolve/runtime-lock.json /var/lib/fieldcraft-ngsolve
+fi

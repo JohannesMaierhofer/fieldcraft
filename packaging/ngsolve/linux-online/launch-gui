@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+seed_preferences() (
+    umask 077
+    folder=${XDG_DATA_HOME:-"$HOME/.local/share"}/fieldcraft
+    prefs=$folder/prefs.json
+    [ ! -e "$prefs" ] && [ ! -L "$prefs" ] || exit 0
+    mkdir -p -- "$folder" || exit 1
+    initial=$(mktemp "$folder/.initial-prefs.XXXXXXXX") || exit 1
+    trap 'rm -f -- "$initial"' EXIT
+    printf '%s\n' '{"show_donate_button":false}' > "$initial" || exit 1
+    # The single hard-link operation leaves any file created concurrently intact.
+    ln -T -- "$initial" "$prefs" 2>/dev/null || [ -e "$prefs" ] || [ -L "$prefs" ]
+)
+if [ "$(id -u)" != 0 ] && ! seed_preferences; then
+    echo 'FieldCraft could not initialize the user preference file.' >&2
+fi
+exec /opt/fieldcraft-ngsolve/fieldcraft "$@"

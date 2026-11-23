@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+root=/var/lib/fieldcraft-ngsolve
+if [ "$1" = purge ] && [ -d "$root/runtimes" ] && [ ! -L "$root/runtimes" ]; then
+    for dir in "$root"/runtimes/*; do
+        [ -d "$dir" ] && [ ! -L "$dir" ] && [ -f "$dir/runtime-lock.json" ] || continue
+        hash=$(sha256sum "$dir/runtime-lock.json" | cut -d' ' -f1)
+        [ "${dir##*/}" = "$hash" ] || continue
+        if [ -L "$root/current" ] && [ "$(readlink "$root/current")" = "runtimes/$hash" ]; then
+            rm "$root/current"
+        fi
+        rm -rf "$dir"
+    done
+    rmdir "$root/runtimes" "$root" 2>/dev/null || :
+fi
