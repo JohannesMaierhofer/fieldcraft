@@ -44,6 +44,10 @@ if ($IsWindows) {
     $env:DISPLAY = ':97'
     $xserver = Start-Process 'Xvfb' -ArgumentList ':97 -screen 0 1400x900x24' -PassThru
 }
+$distributedNotice = (Get-FileHash "$root/dist/ngsolve/SOLVER-NOTICES.txt").Hash
+if ((Get-FileHash "$homeDir/SOLVER-NOTICES.txt").Hash -ne $distributedNotice) {
+    throw "External solver notice differs between the installer and its download"
+}
 Push-Location $out
 try {
     $runtime = & $python -c "import json,sys,sysconfig,numpy,ngsolve,netgen; print(json.dumps(dict(python=sys.version,platform=sysconfig.get_platform(),numpy=numpy.__version__,ngsolve=ngsolve.__version__,netgen=netgen.__version__)))" | ConvertFrom-Json

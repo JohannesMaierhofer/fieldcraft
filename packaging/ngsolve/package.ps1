@@ -38,6 +38,8 @@ Expand-Archive "$work/bridge.zip" "$work/bridge-source"
 $bridge = (Get-ChildItem "$work/bridge-source" -Directory).FullName
 Move-Item $bridge "$payload/bridge"
 Copy-Item "$PSScriptRoot/runtime-lock.json" $payload
+Copy-Item "$PSScriptRoot/SOLVER-NOTICES.txt" $payload
+Copy-Item "$PSScriptRoot/SOLVER-NOTICES.txt" $out
 Copy-Item "$PSScriptRoot/README.md" "$payload/INSTALL.md"
 New-Item -ItemType Directory "$payload/licenses" | Out-Null
 foreach ($file in ('LICENSE-MIT','LICENSE-APACHE','NOTICE','THIRD-PARTY-LICENSES.txt')) {

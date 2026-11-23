@@ -28,7 +28,8 @@ cleanup() { /bin/rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work/scripts" "$work/apps"
 cp "$here/ngsolve/$arch.lock" "$work/scripts/runtime.lock"
-cp "$here/ngsolve/postinstall" "$here/ngsolve/fieldcraft-ngsolve" "$here/ngsolve/NOTICE.txt" "$work/scripts/"
+cp "$here/ngsolve/postinstall" "$here/ngsolve/fieldcraft-ngsolve" "$work/scripts/"
+cp "$here/../ngsolve/SOLVER-NOTICES.txt" "$work/scripts/NOTICE.txt"
 chmod 755 "$work/scripts/postinstall"
 printf '%s\n' "$arch" > "$work/scripts/arch"
 if [[ -n "$cache" ]]; then

@@ -1,0 +1,90 @@
+FieldCraft – external NGSolve runtime
+
+The desktop application runs this solver in a separate Python process. Its numerical and CAD dependencies are installed in that interpreter. The FieldCraft application has its own distribution notices. The bridge carries LICENSE-MIT and LICENSE-APACHE in bridge/.
+
+Package contents and matching sources
+
+The macOS online installer downloads the original external archives on the target machine. Its optional offline variant embeds them. The Windows and Linux installers carry the preinstalled private runtime. Windows on Arm uses the same x64 solver wheels as Windows x64. Each installer includes its exact upstream archive URLs and SHA-256 digests in runtime.lock (macOS) or runtime-lock.json (Windows and Linux).
+
+• CPython 3.13.18 from python-build-standalone 20261110. The interpreter carries the Python licence and pip's own distribution notices. For the interpreter, bundled native dependencies and build configuration, consult the tagged source and the matching full distribution's PYTHON.json and licenses/ records.
+  https://github.com/astral-sh/python-build-standalone/releases/tag/20261110
+  https://www.python.org/downloads/release/python-31318/
+  https://gregoryszorc.com/docs/python-build-standalone/main/distributions.html
+
+• NGSolve and netgen-mesher 6.2.2608. Both wheels declare LGPL-2.1-only and carry the licence under their own .dist-info/licenses/LICENSE. These are the matching upstream version tags.
+  https://github.com/NGSolve/ngsolve/tree/37cb7f9049921c87deec9250fb444754d1e31ab7
+  https://github.com/NGSolve/netgen/tree/96e5682f6ea43ba77ba3bb2ae4bb4bd1791f506e
+  https://pypi.org/project/ngsolve/6.2.2608/#files
+  https://pypi.org/project/netgen-mesher/6.2.2608/#files
+
+• netgen-occt 7.8.1 provides the Open CASCADE Technology (OCCT) libraries used by the external runtime. The wheels carry LICENSE_LGPL_21.txt. Upstream licenses OCCT under LGPL 2.1 with its additional exception. The text of that exception is reproduced below. The OCCT version tag and the wheel producer's repository are separate references.
+  https://github.com/Open-Cascade-SAS/OCCT/tree/bd2a789f15235755ce4d1a3b07379a2e062fdc2e
+  https://github.com/NGSolve/OCCT
+  https://pypi.org/project/netgen-occt/7.8.1/#files
+
+• ngsolve-openblas 0.3.33 is included on Windows and Linux. Both wheels declare BSD-3-Clause. Its copyright and licence text from upstream OpenBLAS 0.3.33 appear below. The Linux wheel also carries libgfortran.so.5.0.0. The GCC runtime library uses GPL-3.0-or-later with the GCC Runtime Library Exception 3.1. The accompanying NumPy distribution notice includes these terms.
+  https://github.com/OpenMathLib/OpenBLAS/tree/62bcfb0dc9f1cfa685fc04135c50e2780c303137
+  https://pypi.org/project/ngsolve-openblas/0.3.33/#files
+  https://www.gnu.org/licenses/gcc-exception-3.1.html
+
+• NumPy 2.3.5 carries its BSD and bundled-library notices in numpy-2.3.5.dist-info/LICENSE.txt. Its platform-specific text covers OpenBLAS, LAPACK and the GCC runtime. The locked Linux and Intel macOS wheels include a separate libquadmath shared library under LGPL-2.1-or-later. Consult the notice in the installed wheel for the applicable component terms. The NumPy source distribution on PyPI has SHA-256 784db1dcdab56bf0517743e746dfb0f885fc68d948aba86eeec2cba234bdf1c0.
+  https://pypi.org/project/numpy/2.3.5/#files
+  https://github.com/numpy/numpy/releases/tag/v2.3.5
+  https://gcc.gnu.org/releases.html
+
+• For the external bridge, the source zip itself is installed in extracted form. Its exact commit appears in the installer lock.
+  https://github.com/JohannesMaierhofer/fieldcraft-ngsolve
+
+Redistributing an offline installer
+
+LGPL 2.1 §4 covers distribution of the library in binary form. For a downloadable release, provide equivalent access from the same place to its complete corresponding machine-readable source, including the material required to build and install the library. Preserve the applicable copyright notices and licence texts for each component.
+
+The NGSolve, netgen-mesher, netgen-occt and ngsolve-openblas releases listed above publish only wheels on PyPI. The source references identify upstream versions. Matching all wheel producers' patches, submodules, build inputs and bundled runtime libraries to the actual binaries and supplying the corresponding source remain release-publisher work for an offline redistribution. This notice may accompany the release alongside the source material.
+  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html
+
+Original OCCT licence exception, OCCT V7_8_1
+https://github.com/Open-Cascade-SAS/OCCT/blob/bd2a789f15235755ce4d1a3b07379a2e062fdc2e/OCCT_LGPL_EXCEPTION.txt
+
+Open CASCADE exception (version 1.0) to GNU LGPL version 2.1.
+
+The object code (i.e. not a source) form of a "work that uses the Library"
+can incorporate material from a header file that is part of the Library.
+As a special exception to the GNU Lesser General Public License version 2.1,
+you may distribute such object code incorporating material from header files
+provided with the Open CASCADE Technology libraries (including code of CDL
+generic classes) under terms of your choice, provided that you give
+prominent notice in supporting documentation to this code that it makes use
+of or is based on facilities provided by the Open CASCADE Technology software.
+
+Original OpenBLAS licence, OpenBLAS 0.3.33
+https://github.com/OpenMathLib/OpenBLAS/blob/62bcfb0dc9f1cfa685fc04135c50e2780c303137/LICENSE
+
+Copyright (c) 2011-2014, The OpenBLAS Project
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   1. Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+   2. Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in
+      the documentation and/or other materials provided with the
+      distribution.
+   3. Neither the name of the OpenBLAS project nor the names of
+      its contributors may be used to endorse or promote products
+      derived from this software without specific prior written
+      permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

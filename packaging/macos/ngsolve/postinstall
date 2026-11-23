@@ -72,7 +72,6 @@ if [[ ! -e "$package_dir" ]]; then
     [[ ${#directories[@]} == 1 && -f "${directories[0]}/workflow.py" && -f "${directories[0]}/show_run.py" ]]
     mv "${directories[0]}" "$stage/payload/bridge"
     cp "$lock" "$stage/payload/runtime.lock"
-    cp "$here/NOTICE.txt" "$stage/payload/NOTICE.txt"
     smoke "$python"
     # Rename atomically. If an identical installer wins the race, retain the
     # winning complete directory and verify its lock and runtime below.
@@ -91,6 +90,9 @@ RENAME
 fi
 cmp -s "$package_dir/runtime.lock" "$lock"
 smoke "$package_dir/python/bin/python3"
+# Notices can change while the binary lock remains the same. Publish them atomically.
+cp "$here/NOTICE.txt" "$stage/NOTICE.txt"
+/bin/mv -fh "$stage/NOTICE.txt" "$package_dir/NOTICE.txt"
 ln -s "runtimes/$version" "$stage/current"
 /bin/mv -fh "$stage/current" "$root/current"
 for link in python bridge; do
