@@ -1,0 +1,19 @@
+# Executed by the private interpreter as the console user during an interactive installation.
+import os
+import tempfile
+from pathlib import Path
+
+if os.geteuid() == 0:
+    raise SystemExit("Initial preferences must be created by their owner")
+folder = Path.home() / "Library/Application Support/FieldCraft"
+folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+prefs = folder / "prefs.json"
+if not os.path.lexists(prefs):
+    # A link publishes the complete file only if the destination is still absent.
+    with tempfile.NamedTemporaryFile(dir=folder, prefix=".initial-prefs-") as initial:
+        initial.write(b'{"show_donate_button":false}\n')
+        initial.flush()
+        try:
+            os.link(initial.name, prefs)
+        except FileExistsError:
+            pass

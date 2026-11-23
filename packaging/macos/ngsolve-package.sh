@@ -3,14 +3,15 @@
 set -euo pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "Usage: $0 --app FieldCraft.app --arch x86_64|arm64 --output result.pkg [--offline-cache DIR]" >&2; exit 2; }
-app=''; arch=''; out=''; cache=''
+usage() { echo "Usage: $0 --app FieldCraft.app --arch x86_64|arm64 --output result.pkg [--offline-cache DIR] [--hide-donate-on-first-install]" >&2; exit 2; }
+app=''; arch=''; out=''; cache=''; seed_prefs=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --app) app=$2; shift 2 ;;
         --arch) arch=$2; shift 2 ;;
         --output) out=$2; shift 2 ;;
         --offline-cache) cache=$2; shift 2 ;;
+        --hide-donate-on-first-install) seed_prefs=true; shift ;;
         *) usage ;;
     esac
 done
@@ -30,6 +31,9 @@ mkdir -p "$work/scripts" "$work/apps"
 cp "$here/ngsolve/$arch.lock" "$work/scripts/runtime.lock"
 cp "$here/ngsolve/postinstall" "$here/ngsolve/fieldcraft-ngsolve" "$work/scripts/"
 cp "$here/../ngsolve/SOLVER-NOTICES.txt" "$work/scripts/NOTICE.txt"
+if [[ "$seed_prefs" == true ]]; then
+    cp "$here/ngsolve/initial-preferences" "$work/scripts/"
+fi
 chmod 755 "$work/scripts/postinstall"
 printf '%s\n' "$arch" > "$work/scripts/arch"
 if [[ -n "$cache" ]]; then
