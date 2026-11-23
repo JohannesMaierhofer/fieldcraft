@@ -44,6 +44,7 @@ pub mod results;
 pub mod roots;
 pub mod stl;
 pub mod views;
+pub mod vol;
 pub mod vtk;
 
 use std::collections::{BTreeMap, BTreeSet};
