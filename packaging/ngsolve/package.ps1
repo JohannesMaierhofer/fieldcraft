@@ -33,7 +33,6 @@ $wheelPaths = (Get-ChildItem $wheels -Filter '*.whl').FullName
 & $python -m ensurepip
 & $python -m pip install --no-cache-dir --no-compile --no-index --no-deps @wheelPaths
 & $python -m pip check
-& $python -I -c 'import studypype, yaml'
 & $python -I -m uv --version
 Fetch $lock.bridge "$work/bridge.zip"
 Expand-Archive "$work/bridge.zip" "$work/bridge-source"

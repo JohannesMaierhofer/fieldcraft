@@ -37,14 +37,12 @@ import sys
 import netgen
 import ngsolve as ng
 import numpy
-import studypype
-import yaml
 from netgen.geom2d import unit_square
 
 prefix = Path(sys.prefix).resolve()
-assert all(Path(module.__file__).resolve().is_relative_to(prefix) for module in (ng, numpy, netgen, studypype, yaml))
+assert all(Path(module.__file__).resolve().is_relative_to(prefix) for module in (ng, numpy, netgen))
 versions = {'ngsolve': '6.2.2608', 'netgen-mesher': '6.2.2608', 'netgen-occt': '7.8.1',
-            'numpy': '2.3.5', 'studypype': '3.0.0', 'PyYAML': '6.0.3', 'uv': '0.11.26'}
+            'numpy': '2.3.5', 'uv': '0.11.26'}
 assert all(metadata.version(name) == version for name, version in versions.items())
 mesh = ng.Mesh(unit_square.GenerateMesh(maxh=.5))
 assert abs(ng.Integrate(1.0, mesh) - 1.0) < 1e-12

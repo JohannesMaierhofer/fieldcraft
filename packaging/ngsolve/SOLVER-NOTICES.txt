@@ -35,9 +35,7 @@ The macOS online installer downloads the original external archives on the targe
 • For the external bridge, the source zip itself is installed in extracted form. Its exact commit appears in the installer lock.
   https://github.com/JohannesMaierhofer/fieldcraft-ngsolve
 
-• StudyPype 3.0.0 (MIT), PyYAML 6.0.3 (MIT), and uv 0.11.26 (MIT OR Apache-2.0) are installed in the private interpreter. Each wheel retains its license and any bundled third-party notices.
-  https://pypi.org/project/studypype/3.0.0/#files
-  https://pypi.org/project/PyYAML/6.0.3/#files
+• uv 0.11.26 (MIT OR Apache-2.0) is installed in the private interpreter. The wheel retains its license and bundled third-party notices.
   https://pypi.org/project/uv/0.11.26/#files
 
 Redistributing an offline installer
