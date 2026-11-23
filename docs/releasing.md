@@ -1,5 +1,38 @@
 # Releasing FieldCraft
 
+## NGSolve community fork
+
+Johannes Maierhofer publishes the community build from `main`. The tag
+`ngsolve-v0.8.1-r1`, for example, identifies fork revision 1 based on upstream 0.8.1.
+Keep published tags immutable. Use the next revision for a replacement binary.
+The integration branch is `codex/ngsolve-installers`. Separate branches carry the Intel
+build, result readers and model browser for upstream review.
+
+Assemble each installer locally and verify its installation before attaching it to the
+draft release. The release notes identify the desktop revision, solver bridge, packager
+and test host for each asset. For a compatibility installer, record the revision of the
+previously built GUI and CLI and identify the features available in that desktop.
+
+On an Intel Mac with the repository toolchain, build the application, then wrap it in
+the product installer which fetches the locked solver runtime from its distributors.
+
+```sh
+export CARGO_TARGET_DIR="$PWD/target"
+cargo xtask licences
+packaging/macos/package.sh --arch x86_64
+packaging/macos/ngsolve-package.sh --arch x86_64 \
+  --app "$CARGO_TARGET_DIR/macos-package/FieldCraft.app" \
+  --output "$PWD/dist/release/FieldCraft-NGSolve-x86_64.pkg"
+```
+
+Exercise a case with a known reference value and open its fields on the installed
+desktop. For a desktop with time-series support, check playback, pause and the last
+frame. Compute SHA-256 for the finished installer, compare the uploaded asset digest
+and list it in `SHA256SUMS.txt`. Fast-forward the fork's `main` to the tested source
+revision and publish the release from that commit. [macOS runtime and offline packaging](../packaging/macos/ngsolve/README.md)
+
+## Tangency Labs releases
+
 Releases are deliberate. Development lands on `develop`, the trunk; `main` holds released code
 only. Fast-forwarding `main` to the chosen, verified `develop` commit builds every package and
 creates a **draft** GitHub Release; a maintainer verifies the draft and publishes it. Pushes to
