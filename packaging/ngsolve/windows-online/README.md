@@ -6,6 +6,52 @@ The user runs one per-user installer. It downloads its private CPython from Astr
 
 The default installation directory is `%LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network\g-<generation>`. The complete runtime-lock digest, desktop, architecture, bridge and core file hashes determine the 52-character generation key. A fresh profile starts with the Donate button and upstream update checks disabled. The installer preserves an existing preference file byte for byte. The Start menu includes the desktop and examples. The installed network-edition instructions describe removal. Windows' signature verification reports an unsigned publisher for these local builds. Verify the separately supplied installer digest.
 
+## Run your own case from an installed Windows copy
+
+Open **Start → All apps → FieldCraft with NGSolve (network) → Solver examples** to see the three sample files. The **FieldCraft** entry opens the native modelling application. Start a solver case from PowerShell with the installed `fieldcraft-ngsolve.cmd` launcher. The 9def desktop opens model files through **File → Open**. Its **File → Run Script** command takes a native FieldCraft command script. A solver `.case.json` is an input to the launcher.
+
+The default program location for the current user is `%LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network\g-<generation>`. The Start menu shortcut points to the chosen installation even when you selected another directory. In Windows PowerShell, find its target:
+
+```powershell
+$programs = [Environment]::GetFolderPath('Programs')
+$link = Join-Path $programs 'FieldCraft with NGSolve (network)\FieldCraft.lnk'
+if (-not (Test-Path -LiteralPath $link)) { throw 'The FieldCraft Start menu shortcut was not found.' }
+$gui = (New-Object -ComObject WScript.Shell).CreateShortcut($link).TargetPath
+$install = Split-Path -LiteralPath $gui
+```
+
+For an installation made with `/NOSHORTCUTS`, set `$install` to its actual `g-…` program directory and `$gui = Join-Path $install 'fieldcraft.exe'`.
+
+Create a writable project folder. This example copies the supplied geometry commands and solver, gives the solver its own filename, and saves a case pointing to it. Choose a new folder for the example.
+
+```powershell
+$project = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Platte Versuch'
+New-Item -ItemType Directory -Path $project -ErrorAction Stop | Out-Null
+$samples = Join-Path $install 'bridge\samples'
+Copy-Item -LiteralPath (Join-Path $samples 'slab.json') -Destination $project
+Copy-Item -LiteralPath (Join-Path $samples 'potential.py') -Destination (Join-Path $project 'Eigener Solver.py')
+$case = Get-Content -LiteralPath (Join-Path $samples 'slab.case.json') -Raw | ConvertFrom-Json
+$case.script = 'Eigener Solver.py'
+$casePath = Join-Path $project 'Meine Platte.case.json'
+[IO.File]::WriteAllText($casePath, ($case | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+
+Push-Location -LiteralPath $project
+try {
+    & (Join-Path $install 'fieldcraft-cli.exe') run slab.json
+    if ($LASTEXITCODE -ne 0) { throw 'Meshing the sample model failed.' }
+} finally { Pop-Location }
+```
+
+Edit `Eigener Solver.py` in the project, then run the case. To use an existing project, set `$casePath` to its case file and choose a fresh output directory. `model` and `script` paths in the case are relative to the case file. The material and boundary names must match the saved mesh.
+
+```powershell
+$output = Join-Path $project 'Ergebnis 01'
+$python = Join-Path $install 'python\python.exe'
+& (Join-Path $install 'fieldcraft-ngsolve.cmd') case $casePath $output --python $python --gui $gui
+```
+
+The launcher runs the chosen Python script, writes fields and integrals under `Ergebnis 01`, and opens the selected result in a dedicated FieldCraft window. Point `$python` to another compatible interpreter to use a separate NGSolve installation. Omitting `--gui $gui` keeps the run headless. Use a new output directory for each calculation.
+
 ## Rebuild
 
 The build host uses Python 3.11+ and a separate set of [companion build helpers at revision dfe7578](https://github.com/JohannesMaierhofer/fieldcraft-ngsolve/tree/dfe7578de6e01676f31cde9e27743ccef7d4c011/packaging/windows). Check out that exact commit and set `helpers` to its absolute `packaging/windows` directory. Run the following steps from this FieldCraft `windows-online` directory. The helpers read the FieldCraft recipe via `--recipe` and leave the separately pinned solver bridge unchanged.
