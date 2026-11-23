@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn selecting_an_external_result_requires_exactly_one_source() {
-        let mut session = Session::default();
+        let (_dir, mut session, _path, _run) = fixture();
         for command in ["results.external.contour", "results.external.series"] {
             for params in [json!({}), json!({"path":"field.json","entry":"B"})] {
                 let err = session.execute(command, &params).unwrap_err().to_string();
