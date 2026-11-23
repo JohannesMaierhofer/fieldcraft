@@ -80,6 +80,11 @@ When an external run is loaded, the `external` node in `ui.inspect.browser` incl
 Click a field to display its contour or a time series to open the playback controls.
 Integral rows show the solver value and unit. Material, boundary and interface names
 select the corresponding model set when present. Loads come from the solver manifest.
+A compact archive can keep a matching mesh and signed integrals after all its separate
+field and series files have been omitted. The default `results.external.integrals` call then
+returns the integral values and registers the available quantities. A partially missing run
+reports an error. Explicit `catalog_only: true` requires every listed sibling file.
+Field and series units may be empty for dimensionless data.
 
 ## Selection
 
