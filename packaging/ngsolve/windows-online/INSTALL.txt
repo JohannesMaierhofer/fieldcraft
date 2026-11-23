@@ -1,0 +1,31 @@
+FieldCraft 0.8.1 and NGSolve for Windows (network edition)
+
+Run the installer matching your operating system. Windows x64 uses the native
+x64 desktop. Windows 11 on ARM64 uses the native ARM64 desktop and the x64
+solver under the operating system's x64 application emulation. The core
+application is revision 9def8cf4. The bridge is revision 74393901. The installer
+and its desktop binaries are unsigned. Check the separately supplied SHA-256
+of the installer before starting it.
+
+The installer fetches the separate CPython runtime from Astral, solver wheels
+from their PyPI distribution origin, and the bridge from its GitHub archive.
+It validates each SHA-256 before installing it. runtime-lock.json contains the
+exact upstream URLs and hashes. SOLVER-NOTICES.txt also describes the earlier
+offline edition. In this network edition Python, all wheels and the bridge
+arrive from their publishers at install time. They retain their included
+license files. The application licenses and NSIS notices are in licenses.
+
+Start FieldCraft from the Start menu. In the installed version directory run
+fieldcraft-ngsolve.cmd --help to use the bridge. An ordinary installation uses
+%LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network. Rerunning the installer
+validates an existing matching version. The selected prefix is private to this
+installation. No administrator access or system Python changes are required.
+
+On a new profile the Donate button and built-in upstream update check start
+disabled. Existing preference files keep their exact contents. You can change
+the options in FieldCraft settings.
+
+Uninstall: close this installation of FieldCraft and its solver, then remove
+its version directory under the selected prefix and its two shortcuts under
+Start Menu\Programs\FieldCraft with NGSolve (network). Retain user models
+and output directories wherever you stored them.

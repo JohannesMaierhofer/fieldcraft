@@ -1,0 +1,18 @@
+{
+  "x64": {
+    "fieldcraft-cli.exe": "e1163cf768c239f2eb55ac18f7d76e8344a03d778d775552ff4a5d878eb12b36",
+    "fieldcraft.exe": "5169082fd142d92c16298bcc049944a857dd30badeaafbd4f525c3ee402a4d58",
+    "licenses/LICENSE-APACHE": "eb3d7b5485466acbd81f2b496f595ab637d2792e268206b27d99e793bdb67549",
+    "licenses/LICENSE-MIT": "6549af586eab25d29802f95ce6eed20ff397d738e23d48b0775f7d7a7ff2f4f9",
+    "licenses/NOTICE": "c2fd95087bae58f9e540f62b861c3a368e09af80af30e2b8c8c18ae0b41a24bc",
+    "licenses/THIRD-PARTY-LICENSES.txt": "1775ff2eb03e65ba2ebc7cbac1b45c525d55fed73c4e54b4dcd687660206ae3b"
+  },
+  "arm64": {
+    "fieldcraft-cli.exe": "5e1282bf6f9b0312b73b83c53177244e99558f546f92b099399d57506c388321",
+    "fieldcraft.exe": "b6c3efde6f850fe729c92a363f21fc406c643d521d1aae4e4dd408a7dc8d99fd",
+    "licenses/LICENSE-APACHE": "eb3d7b5485466acbd81f2b496f595ab637d2792e268206b27d99e793bdb67549",
+    "licenses/LICENSE-MIT": "6549af586eab25d29802f95ce6eed20ff397d738e23d48b0775f7d7a7ff2f4f9",
+    "licenses/NOTICE": "c2fd95087bae58f9e540f62b861c3a368e09af80af30e2b8c8c18ae0b41a24bc",
+    "licenses/THIRD-PARTY-LICENSES.txt": "1775ff2eb03e65ba2ebc7cbac1b45c525d55fed73c4e54b4dcd687660206ae3b"
+  }
+}
