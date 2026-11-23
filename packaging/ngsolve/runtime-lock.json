@@ -29,6 +29,21 @@
         "name": "numpy-2.3.5-cp313-cp313-win_amd64.whl",
         "url": "https://files.pythonhosted.org/packages/0c/88/e2eaa6cffb115b85ed7c7c87775cb8bcf0816816bc98ca8dbfa2ee33fe6e/numpy-2.3.5-cp313-cp313-win_amd64.whl",
         "sha256": "00dc4e846108a382c5869e77c6ed514394bdeb3403461d25a829711041217d5b"
+      },
+      {
+        "name": "studypype-3.0.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/33/25/97624d3833211d47ade420b9028b690beecdda716dbfadd1c7c02edf102b/studypype-3.0.0-py3-none-any.whl",
+        "sha256": "b1e380294bd4c7567d07d30e8f2a38c409cb2c64fd350e50234505119562d44a"
+      },
+      {
+        "name": "pyyaml-6.0.3-cp313-cp313-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/97/c9/39d5b874e8b28845e4ec2202b5da735d0199dbe5b8fb85f91398814a9a46/pyyaml-6.0.3-cp313-cp313-win_amd64.whl",
+        "sha256": "79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c"
+      },
+      {
+        "name": "uv-0.11.26-py3-none-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/d0/13/9c588226d5b478328d739e654944430719f3ffe8999d6a24d425ec9664ab/uv-0.11.26-py3-none-win_amd64.whl",
+        "sha256": "d95567e9470dc48ff03265f420c3c6973f6437f18a79d5e00b6eb4b2d9379907"
       }
     ]
   },
@@ -62,6 +77,21 @@
         "name": "numpy-2.3.5-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
         "url": "https://files.pythonhosted.org/packages/f5/10/ca162f45a102738958dcec8023062dad0cbc17d1ab99d68c4e4a6c45fb2b/numpy-2.3.5-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
         "sha256": "11e06aa0af8c0f05104d56450d6093ee639e15f24ecf62d417329d06e522e017"
+      },
+      {
+        "name": "studypype-3.0.0-py3-none-any.whl",
+        "url": "https://files.pythonhosted.org/packages/33/25/97624d3833211d47ade420b9028b690beecdda716dbfadd1c7c02edf102b/studypype-3.0.0-py3-none-any.whl",
+        "sha256": "b1e380294bd4c7567d07d30e8f2a38c409cb2c64fd350e50234505119562d44a"
+      },
+      {
+        "name": "pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/74/27/e5b8f34d02d9995b80abcef563ea1f8b56d20134d8f4e5e81733b1feceb2/pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "sha256": "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6"
+      },
+      {
+        "name": "uv-0.11.26-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/d3/00/478c3a870dcac690b8c337ee950a60a952e817f574945e85155c3cc0ab34/uv-0.11.26-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "sha256": "4dcf4e0b5b5cbdc242dcb002f1f8d99e7cf8c043609869228a9ce15e095c0b18"
       }
     ]
   },
