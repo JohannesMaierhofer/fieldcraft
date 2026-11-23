@@ -29,7 +29,28 @@ package_dir="$root/runtimes/$version"
 smoke() {
     # -I ignores PYTHON* variables and user packages. A tiny real FE integral
     # exercises the native modules and their shared libraries after relocation.
-    "$1" -I -B -c 'import pathlib,sys,importlib.metadata as m; import numpy,netgen,ngsolve as ng; from netgen.geom2d import unit_square; p=pathlib.Path(sys.prefix).resolve(); assert all(pathlib.Path(x.__file__).resolve().is_relative_to(p) for x in (ng,numpy,netgen)); assert m.version("ngsolve")=="6.2.2608" and m.version("netgen-mesher")=="6.2.2608" and m.version("netgen-occt")=="7.8.1" and m.version("numpy")=="2.3.5"; mesh=ng.Mesh(unit_square.GenerateMesh(maxh=.5)); assert abs(ng.Integrate(1.0,mesh)-1.0)<1e-12; print(sys.version,ng.__version__,mesh.ne)'
+    "$1" -I -B - <<'PYTHON_SMOKE'
+import importlib.metadata as metadata
+from pathlib import Path
+import sys
+
+import netgen
+import ngsolve as ng
+import numpy
+import studypype
+import yaml
+from netgen.geom2d import unit_square
+
+prefix = Path(sys.prefix).resolve()
+assert all(Path(module.__file__).resolve().is_relative_to(prefix) for module in (ng, numpy, netgen, studypype, yaml))
+versions = {'ngsolve': '6.2.2608', 'netgen-mesher': '6.2.2608', 'netgen-occt': '7.8.1',
+            'numpy': '2.3.5', 'studypype': '3.0.0', 'PyYAML': '6.0.3', 'uv': '0.11.26'}
+assert all(metadata.version(name) == version for name, version in versions.items())
+mesh = ng.Mesh(unit_square.GenerateMesh(maxh=.5))
+assert abs(ng.Integrate(1.0, mesh) - 1.0) < 1e-12
+print(sys.version, ng.__version__, mesh.ne)
+PYTHON_SMOKE
+    "$1" -I -B -m uv --version
 }
 if [[ ! -e "$package_dir" ]]; then
     mkdir "$stage/downloads" "$stage/payload"
