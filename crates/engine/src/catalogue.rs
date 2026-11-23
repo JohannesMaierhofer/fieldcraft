@@ -771,7 +771,7 @@ pub static CATALOGUE: &[Capability] = &[
         "External Integrals",
         Results,
         "Query",
-        "Named scalar and vector integrals from an external solver on this mesh",
+        "External run fields, time series, integrals and named regions on this mesh",
     ),
     ready_more(
         "solve.probe",

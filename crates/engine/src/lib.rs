@@ -28,6 +28,7 @@ pub use cmd::update::enable_checks as enable_update_checks;
 pub use fieldcraft_io::fs::write_output;
 pub use fieldcraft_io::{Item as ViewItem, ItemKind};
 pub mod external;
+pub mod external_catalog;
 mod external_integrals;
 pub mod external_series;
 pub mod history;
@@ -318,6 +319,8 @@ pub struct Session {
     /// Optional verified nodal field from a separately run calculation.
     pub(crate) external_field: Option<Arc<external::ExternalField>>,
     pub(crate) field_series: Option<external_series::Series>,
+    result_catalog: Option<Arc<external_catalog::ExternalCatalog>>,
+    selected_result: Option<external_catalog::CatalogField>,
     /// The open SolidCraft design (`geometry.open`); shared, so a snapshot costs nothing.
     pub design: Option<Arc<Design>>,
     /// Face-tagged boundary surfaces (`geometry.import.mesh`): the input to volume meshing.

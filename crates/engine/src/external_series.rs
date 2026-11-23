@@ -1,10 +1,10 @@
 //! Playback of measured or computed nodal fields on a fixed mesh.
 //! All frames are validated before the session changes. Playback only reads memory.
-use crate::cmd::{file, file_param, forms, opt};
+use crate::cmd::{file, forms, opt};
 use crate::external::ExternalField;
+use crate::external_catalog::{Kind, Selection, sibling};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
-use fieldcraft_io::roots::Access;
 use fieldcraft_render::nodal::FieldFile;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -15,7 +15,7 @@ use std::sync::Arc;
 pub(crate) const SERIES: CommandSpec = CommandSpec {
     id: "results.external.series",
     label: "Open External Field Series",
-    params: r#"{"path":"B.series.json","component"?: "auto|magnitude|x|y|z"} — open a mesh-bound time series on its first frame. A selected vector component has one colour scale across all frames. Use results.external.playback to seek or play."#,
+    params: r#"{"path":"B.series.json","component"?: "auto|magnitude|x|y|z"} — open a mesh-bound time series on its first frame. A selected vector component has one colour scale across all frames. Use {"entry":"name"} instead of path to reopen a checked catalog row. Use results.external.playback to seek or play."#,
     form: Some(forms::EXTERNAL_SERIES),
     kind: CommandKind::Session,
     requires: &[Requirement::Mesh],
@@ -139,26 +139,10 @@ fn control(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"frame":series.frame(),"frames":series.count(),"time":series.frame_time(),"time_unit":"s","playing":series.playing()}))
 }
 
-fn sibling(s: &Session, manifest: &Path, file: &str) -> Result<String> {
-    if file.is_empty() || file == "." || file == ".." || file.contains(['/', '\\', ':']) || file.chars().any(char::is_control) {
-        return Err(error("a series frame must name a sibling file"));
-    }
-    let path = manifest.with_file_name(file);
-    let path = s.checked_path(path.to_str().ok_or_else(|| error("frame path is not UTF-8"))?, Access::Read)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let folder = manifest.canonicalize().map_err(|e| EngineError::Params(e.to_string()))?;
-        let resolved = Path::new(&path).canonicalize().map_err(|e| EngineError::Params(e.to_string()))?;
-        if resolved.parent() != folder.parent() {
-            return Err(error("frame resolves outside the series directory"));
-        }
-    }
-    Ok(path)
-}
-
 fn load(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = file_param(s, p, "path", Access::Read)?;
-    let bytes = file::read_file(&path, 1024 * 1024)?;
+    let selected = Selection::resolve(s, p, Kind::Series)?;
+    let folder = Path::new(&selected.path).parent().ok_or_else(|| error("missing series directory"))?;
+    let bytes = file::read_file(&selected.path, Kind::Series.limit())?;
     let source: SeriesFile = serde_json::from_slice(&bytes).map_err(|e| EngineError::Params(format!("invalid series: {e}")))?;
     let hash = fieldcraft_io::sha256_hex(&fieldcraft_io::mesh::encode(&s.model)?);
     let count = source.frames.len();
@@ -180,7 +164,7 @@ fn load(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(error("frames need distinct files and strictly increasing finite times"));
         }
         previous = Some(entry.time);
-        let frame_path = sibling(s, Path::new(&path), &entry.file)?;
+        let frame_path = sibling(s, folder, &entry.file, Kind::Field.limit())?;
         let bytes = file::read_file(&frame_path, remaining.min(64 * 1024 * 1024))?;
         remaining = remaining.saturating_sub(bytes.len() as u64);
         let data: FieldFile = serde_json::from_slice(&bytes).map_err(|e| EngineError::Params(format!("invalid frame {}: {e}", entry.file)))?;
@@ -198,6 +182,7 @@ fn load(s: &mut Session, p: &Value) -> Result<Value> {
     for (_, field) in &mut frames {
         field.set_range(range);
     }
+    selected.register(s, &source.name, &source.unit)?;
     s.field_series = Some(Series { frames: Arc::new(frames), revision: s.revision(), index: 0, time: first, playing: false });
     s.external_field = None;
     s.results_view = None;

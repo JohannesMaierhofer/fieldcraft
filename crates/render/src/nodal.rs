@@ -25,6 +25,14 @@ pub struct NodalContour {
 }
 
 impl FieldFile {
+    /// Semantic name as supplied by the solver, before adding a display component or unit.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Physical unit supplied by the solver.
+    pub fn unit(&self) -> &str {
+        &self.unit
+    }
     pub fn matches(&self, name: &str, unit: &str, components: usize) -> bool {
         self.name == name && self.unit == unit && self.components == components
     }
