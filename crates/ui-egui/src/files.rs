@@ -350,7 +350,7 @@ impl Default for Prefs {
             usage_sharing: None,
             usage_automation: true,
             install_id: String::new(),
-            update_check: true,
+            update_check: false,
             update_checked_at: 0,
             update_skip: String::new(),
             units: fieldcraft_model::DisplaySystem::default(),

@@ -70,6 +70,13 @@ impl Client {
 
     /// The JSON the API answers at `path`; `None` when it answers 404 (no such release).
     fn api(&self, path: &str) -> Result<Option<serde_json::Value>> {
+        // Fork tags, multi-component installers and their signing policy differ from the upstream
+        // binary updater. Only the documented local test server exercises that protocol here.
+        let local_test_server =
+            self.host.strip_prefix("http://").and_then(|s| s.parse::<std::net::SocketAddr>().ok()).is_some_and(|a| a.ip().is_loopback());
+        if !local_test_server {
+            return Err(Error::NotSupported(format!("choose the FieldCraft with NGSolve installer at {}", crate::RELEASES_URL)));
+        }
         let url = format!("{}{path}", self.host);
         let reply = self
             .agent
@@ -182,6 +189,16 @@ mod tests {
     use crate::mock::Server;
 
     #[test]
+    fn the_fork_uses_its_complete_installer_for_public_updates() {
+        let client = Client::new(crate::DEFAULT_HOST);
+        for result in
+            [client.check().map(|_| ()), client.release(&Which::Latest).map(|_| ()), client.release(&Which::Version(crate::current())).map(|_| ())]
+        {
+            assert!(matches!(result, Err(Error::NotSupported(message)) if message.contains(crate::RELEASES_URL)));
+        }
+    }
+
+    #[test]
     fn the_latest_release_is_asked_for_and_compared() {
         let server = Server::start().unwrap();
         server.release("latest", &json!({"tag_name": "v99.0.0", "html_url": "https://example.invalid/r", "assets": []}));
@@ -193,9 +210,9 @@ mod tests {
         // Errors are messages, never panics.
         let missing = Client::new(&server.url()).release(&Which::Version(Version::parse("1.2.3").unwrap())).unwrap_err();
         assert!(missing.to_string().contains("no published release of FieldCraft 1.2.3"), "{missing}");
-        server.route("/repos/tangency-labs/fieldcraft/releases/latest", 200, b"not json".to_vec());
+        server.route(&format!("/repos/{REPO}/releases/latest"), 200, b"not json".to_vec());
         assert!(matches!(Client::new(&server.url()).check(), Err(Error::Release(_))));
-        server.route("/repos/tangency-labs/fieldcraft/releases/latest", 403, b"{}".to_vec());
+        server.route(&format!("/repos/{REPO}/releases/latest"), 403, b"{}".to_vec());
         assert!(matches!(Client::new(&server.url()).check(), Err(Error::Network(_))));
         assert!(matches!(Client::new("http://127.0.0.1:1").check(), Err(Error::Network(_))));
     }

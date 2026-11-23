@@ -519,6 +519,8 @@ mod tests {
         let ctx = egui::Context::default();
         let file = temp("auto");
         let (mut a, jobs, _tx) = app(&file, 10 * DAY, true);
+        assert!(!a.prefs.update_check, "the fork defaults to manual installers");
+        a.set_update_prefs(true, None);
         a.poll_updates(&ctx);
         a.poll_updates(&ctx);
         assert_eq!(*jobs.borrow(), [Job::Check { manual: false }], "once per run");

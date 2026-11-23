@@ -183,7 +183,7 @@ fn cancel_restores_the_snapshot_down_to_an_unanswered_question() {
     click_label(&mut app, &ctx, &drawn, "Share anonymous usage");
     assert_eq!(app.prefs.usage_sharing, Some(true), "the click shares");
     assert!(usage::enabled());
-    from_control(&mut app, &json!({"set": {"units": "m-kg-s-N-Pa", "history_dock": "top", "update_check": false}})).unwrap();
+    from_control(&mut app, &json!({"set": {"units": "m-kg-s-N-Pa", "history_dock": "top", "update_check": true}})).unwrap();
     frames(&mut app, &ctx, 2);
     assert_ne!(Snapshot::of(&app), before);
     assert_eq!(prefs.saved().history_dock, HistoryDock::Top, "a change is kept as it is made");
@@ -194,7 +194,10 @@ fn cancel_restores_the_snapshot_down_to_an_unanswered_question() {
     assert_eq!(app.session.default_units, before.units, "the session shows the old units again");
     assert!(!usage::enabled(), "nothing is recorded again");
     let saved = prefs.saved();
-    assert_eq!((saved.usage_sharing, saved.units, saved.history_dock, saved.update_check), (None, before.units, before.history_dock, true));
+    assert_eq!(
+        (saved.usage_sharing, saved.units, saved.history_dock, saved.update_check),
+        (None, before.units, before.history_dock, before.update_check)
+    );
     app.ask_consent();
     assert_eq!(app.prompt, Some(crate::files::Prompt::Consent), "the question is still to be asked");
     usage::disable();

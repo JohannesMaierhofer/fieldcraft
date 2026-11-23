@@ -6,7 +6,7 @@ This is Johannes Maierhofer’s integration fork of FieldCraft, the clean-room R
 
 ## Download and run a first case
 
-**[Download fork installers and checksums from Releases](https://github.com/JohannesMaierhofer/fieldcraft/releases).** Choose the installer for your processor. Fork tags use `ngsolve-v<upstream version>-r<fork revision>`. For example, `ngsolve-v0.8.1-r1` denotes the first fork release based on FieldCraft 0.8.1. The release notes identify the source revision and assets for each build.
+**[Download fork installers and checksums from Releases](https://github.com/JohannesMaierhofer/fieldcraft/releases).** Choose the installer for your processor. Fork tags use `ngsolve-v<upstream version>-r<fork revision>`. For example, `ngsolve-v0.8.1-r1` denotes the first fork release based on FieldCraft 0.8.1. The release notes identify the source revision and assets for each build. Install newer fork versions from this page so the application and solver bridge are updated together. For earlier builds that offer upstream updates, turn off **Help › Settings › Updates › Check for updates automatically** and use the fork installers.
 
 | Tested system | Installer | FieldCraft and NGSolve |
 |---|---|---|

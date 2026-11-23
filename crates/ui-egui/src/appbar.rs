@@ -83,9 +83,9 @@ fn fullscreen(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))
 }
 
-/// This version's release notes.
+/// Downloads and release notes for the NGSolve edition.
 fn release_notes() -> String {
-    format!("https://github.com/tangency-labs/fieldcraft/releases/tag/v{}", crate::VERSION)
+    fieldcraft_update::RELEASES_URL.to_string()
 }
 
 /// The name the kit's bar reads the offer span's drawn width under (`app_bar::show`, SolidCraft's

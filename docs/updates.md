@@ -1,5 +1,14 @@
 # Updates
 
+## FieldCraft with NGSolve
+
+Install the new complete package for your platform from the fork’s release page. It updates the
+native app, bridge and private solver together. In this fork, public update checks and
+self-install commands direct you to the manual installer. Automatic checks default to off.
+The update protocol below describes the upstream FieldCraft distribution. [Fork installers](https://github.com/JohannesMaierhofer/fieldcraft/releases)
+
+## Upstream FieldCraft
+
 FieldCraft checks for new releases, verifies them and installs them itself, with your consent at
 each step. The code is `crates/update` (`fieldcraft-update`); the window's side is
 `crates/ui-egui/src/updates.rs`, the desktop app's `apps/fieldcraft/src/update.rs`.
