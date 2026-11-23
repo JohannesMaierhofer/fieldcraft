@@ -886,6 +886,18 @@ impl ModelApp {
     }
 
     fn begin(&mut self, id: &str, interactive: bool) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        match id {
+            "ui.python" => {
+                self.open_python_workspace();
+                return Ok(());
+            }
+            "ui.python.settings" => {
+                self.open_python_settings();
+                return Ok(());
+            }
+            _ => {}
+        }
         let (command, preset) = match catalogue::find(id) {
             Some(c) => match c.command() {
                 Some(command) => (command, c.preset()),

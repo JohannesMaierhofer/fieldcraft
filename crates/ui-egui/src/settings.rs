@@ -28,7 +28,7 @@ use crate::shell::HistoryDock;
 pub const PREFIX: &str = "prefs";
 
 /// The pages, in the list's order. A page's control-channel name is its handle's last part,
-/// lower-cased (`general`, `privacy`, `updates`).
+/// lower-cased (`general`, `privacy`, `updates`, `python`).
 pub const PAGES: &[Page<ModelApp>] = &[
     Page::Host(HostPage {
         icon: kit::Icon::Kit("prefs_general"),
@@ -57,6 +57,16 @@ pub const PAGES: &[Page<ModelApp>] = &[
         draw: updates,
         defaults: updates_defaults,
     }),
+    #[cfg(not(target_arch = "wasm32"))]
+    Page::Host(HostPage {
+        icon: kit::Icon::Kit("ui.python"),
+        label: "settings.python",
+        group: None,
+        handle: "prefs:page:Python",
+        scroll: true,
+        draw: crate::python_workbench::settings_page,
+        defaults: python_defaults,
+    }),
 ];
 
 /// Everything the pages change, as Cancel puts it back (and `ui.settings` reports it).
@@ -72,6 +82,10 @@ pub struct Snapshot {
     usage_automation: bool,
     update_check: bool,
     update_skip: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    python_interpreter: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    python_bridge: String,
 }
 
 impl Snapshot {
@@ -86,6 +100,10 @@ impl Snapshot {
             usage_automation: app.prefs.usage_automation,
             update_check: app.prefs.update_check,
             update_skip: app.prefs.update_skip.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            python_interpreter: app.prefs.python_interpreter.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            python_bridge: app.prefs.python_bridge.clone(),
         }
     }
 
@@ -104,6 +122,8 @@ impl Snapshot {
         if (app.prefs.update_check, app.prefs.update_skip.as_str()) != (self.update_check, self.update_skip.as_str()) {
             app.set_update_prefs(self.update_check, Some(self.update_skip.clone()));
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        app.set_python_paths(self.python_interpreter.clone(), self.python_bridge.clone());
         app.save_prefs();
     }
 }
@@ -146,6 +166,16 @@ impl ModelApp {
         self.settings.open_at(page, PAGES.len());
         self.ui.menu = None;
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_python_settings(&mut self) {
+        if let Some(index) = (0..PAGES.len()).find(|i| page_name(*i).as_deref() == Some("python")) {
+            self.ui.select_tab(fieldcraft_engine::catalogue::Tab::ExternalAnalysis);
+            self.ui.menu = None;
+            self.settings.clear_search();
+            self.settings.open_at(index, PAGES.len());
+        }
+    }
 }
 
 /// The window's frame and words.
@@ -171,6 +201,10 @@ fn options() -> Options<'static, ModelApp> {
 
 /// Draw Settings while it is open; where it stands is `ui.inspect`'s `settings` region.
 pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.settings.open && page_name(app.settings.section).as_deref() == Some("python") {
+        app.prepare_python_workspace();
+    }
     window::show(ctx, app, PAGES, &options(), |_| {});
     if app.settings.open
         && let Some(rect) = solidcraft_ui_registry::rect_of(&format!("{PREFIX}:window"))
@@ -213,6 +247,10 @@ struct Change {
     usage_automation: Option<bool>,
     update_check: Option<bool>,
     update_skip: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    python_interpreter: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    python_bridge: Option<String>,
 }
 
 /// `ui.settings`: open Settings (at `page`), change what its pages change (`set`), or press a
@@ -221,12 +259,8 @@ pub fn from_control(app: &mut ModelApp, p: &Value) -> Result<Value, String> {
     let at = match p.get("page") {
         None => None,
         Some(name) => {
-            let name = name.as_str().ok_or("`page` must be a page name: general, privacy or updates")?;
-            Some(
-                (0..PAGES.len())
-                    .find(|i| page_name(*i).as_deref() == Some(name))
-                    .ok_or_else(|| format!("no Settings page {name:?} (general, privacy, updates)"))?,
-            )
+            let name = name.as_str().ok_or("`page` must be a Settings page name")?;
+            Some((0..PAGES.len()).find(|i| page_name(*i).as_deref() == Some(name)).ok_or_else(|| format!("no Settings page {name:?}"))?)
         }
     };
     let change = match p.get("set") {
@@ -300,7 +334,19 @@ fn change_to(app: &mut ModelApp, c: Change) {
     if c.update_check.is_some() || c.update_skip.is_some() {
         app.set_update_prefs(c.update_check.unwrap_or(app.prefs.update_check), c.update_skip);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    if c.python_interpreter.is_some() || c.python_bridge.is_some() {
+        app.set_python_paths(
+            c.python_interpreter.unwrap_or_else(|| app.prefs.python_interpreter.clone()),
+            c.python_bridge.unwrap_or_else(|| app.prefs.python_bridge.clone()),
+        );
+    }
     app.save_prefs();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn python_defaults(app: &mut ModelApp) {
+    app.set_python_paths(String::new(), String::new());
 }
 
 /// A checkbox with its hover; true when it was clicked.

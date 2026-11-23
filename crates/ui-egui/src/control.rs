@@ -323,7 +323,9 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
         #[cfg(not(target_arch = "wasm32"))]
         "ui.python" => {
             if p.get("inspect").and_then(Value::as_bool) != Some(true) {
-                app.python_workspace.open(app.session.path.as_deref());
+                if let Err(error) = app.start_programmatic("ui.python") {
+                    return err(error);
+                }
                 if let Some(detached) = p.get("detached").and_then(Value::as_bool) {
                     app.python_workspace.set_detached(detached);
                 }

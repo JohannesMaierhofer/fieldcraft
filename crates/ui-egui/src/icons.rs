@@ -32,6 +32,8 @@ pub const ALIASES: &[(&str, &str, &str)] = &[
     ("ui.style", "style", ""),
     ("ui.moon", "moon", ""),
     ("ui.help", "help", ""),
+    ("ui.python", "import", ""),
+    ("ui.python.settings", "settings", ""),
     ("file.open", "open", ""),
     ("file.save", "save", ""),
     ("edit.undo", "undo", ""),

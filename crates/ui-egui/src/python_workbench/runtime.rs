@@ -60,20 +60,7 @@ run(SimpleNamespace(model=case['model'],
     materials=case['materials'], boundaries=case['boundaries'], interfaces=case['interfaces']))
 "#;
 
-pub(super) const RUN_STUDY: &str = r#"
-import sys
-from pathlib import Path
-import studypype as pype
-
-if __name__ == '__main__':
-    definition = pype.load_yaml_file(Path(sys.argv[1]))
-    study = pype.Tree(definition['study']['name'])
-    study.createfromYAML(definition)
-    study.expand_sweeps()
-    pype.job_runner.run(study, job_folder=sys.argv[2])
-"#;
-
-pub(super) const PROJECT: &str = "[project]\nname = \"fieldcraft-study\"\nversion = \"0.1.0\"\nrequires-python = \"==3.13.*\"\ndependencies = [\n    \"ngsolve==6.2.2608\",\n    \"numpy==2.3.5\",\n    \"studypype==3.0.0\",\n]\n";
+pub(super) const PROJECT: &str = "[project]\nname = \"fieldcraft-project\"\nversion = \"0.1.0\"\nrequires-python = \"==3.13.*\"\ndependencies = [\n    \"ngsolve==6.2.2608\",\n    \"numpy==2.3.5\",\n]\n";
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Runtime {
@@ -82,7 +69,18 @@ pub(super) struct Runtime {
 }
 
 impl Runtime {
-    pub(super) fn detect() -> Self {
+    pub(super) fn with_overrides(python: &str, bridge: &str) -> Self {
+        let mut runtime = if python.is_empty() || bridge.is_empty() { Self::detect() } else { Self::default() };
+        if !python.is_empty() {
+            runtime.python = python.to_string();
+        }
+        if !bridge.is_empty() {
+            runtime.bridge = bridge.to_string();
+        }
+        runtime
+    }
+
+    fn detect() -> Self {
         let windows = cfg!(windows);
         let relative = if windows { "python/python.exe" } else { "python/bin/python3" };
         let mut roots = Vec::new();
@@ -121,7 +119,7 @@ impl Runtime {
         // A venv's executable path must keep its symlink so CPython finds pyvenv.cfg.
         let python = if base { PathBuf::from(&self.python) } else { self.python(root) };
         if !python.is_absolute() || !python.is_file() {
-            return Err("Select the installed FieldCraft Python interpreter under Python Environment".into());
+            return Err("Select the installed FieldCraft Python interpreter in Settings → Python".into());
         }
         let mut command = Command::new(python);
         command
@@ -144,7 +142,7 @@ impl Runtime {
         if bridge.is_absolute() && bridge.join("workflow.py").is_file() {
             Ok(bridge)
         } else {
-            Err("Select the installed NGSolve bridge folder under Python Environment".into())
+            Err("Select the installed NGSolve bridge folder in Settings → Python".into())
         }
     }
 }

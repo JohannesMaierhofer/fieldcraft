@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use egui::{Color32, FontId, Key, Modifiers, RichText, TextEdit, TextFormat, Ui, pos2, vec2};
+use solidcraft_ui_kit as kit;
+use solidcraft_ui_text::tr;
 
 use super::{Document, MAX_FILE, PreferredView, Selection, Workspace, append, in_project, show_result};
 use crate::ModelApp;
@@ -18,7 +20,6 @@ enum Action {
     Save(usize),
     Create(bool),
     Case,
-    Study,
     Result(PathBuf),
     RunFile,
     RunSelection,
@@ -26,7 +27,6 @@ enum Action {
     LoadMesh,
     Stop,
     Reset,
-    Uv(bool),
     Trace(PathBuf, usize),
 }
 
@@ -108,7 +108,6 @@ fn perform(app: &mut ModelApp, action: Action) -> Result<(), String> {
         Action::Save(index) => workspace.save(index)?,
         Action::Create(folder) => workspace.create(folder)?,
         Action::Case => workspace.run_case(&app.session)?,
-        Action::Study => workspace.run_study()?,
         Action::Result(path) => show_result(app, &path, &PreferredView::default())?,
         Action::RunFile => workspace.run_file()?,
         Action::RunSelection => workspace.run_selection()?,
@@ -118,21 +117,69 @@ fn perform(app: &mut ModelApp, action: Action) -> Result<(), String> {
             workspace.console_input.clear();
         }
         Action::LoadMesh => workspace.use_run_in_console()?,
-        Action::Stop => {
-            workspace.job = None;
-            append(&mut workspace.log, "Stopped job".into());
-        }
+        Action::Stop => workspace.stop_job(),
         Action::Reset => {
             workspace.console = None;
             append(&mut workspace.log, "Reset Python console".into());
         }
-        Action::Uv(add) => workspace.uv(add)?,
         Action::Trace(path, line) => {
             workspace.open_file(&path)?;
             workspace.jump_line = Some(line);
         }
     }
     Ok(())
+}
+
+pub(crate) fn settings_page(ui: &mut Ui, app: &mut ModelApp) {
+    kit::settings_page(ui, |ui| {
+        kit::settings_heading(ui, tr("settings.python"), tr("settings.python_note"));
+        kit::settings_section(ui, "python-runtime", tr("settings.python_runtime"), |ui| {
+            let mut python = app.prefs.python_interpreter.clone();
+            let mut bridge = app.prefs.python_bridge.clone();
+            let automatic = tr("settings.python_automatic");
+            let python_changed = kit::row(ui, tr("settings.python_interpreter"), |ui| kit::text_field(ui, &mut python, automatic).1);
+            let bridge_changed = kit::row(ui, tr("settings.python_bridge"), |ui| kit::text_field(ui, &mut bridge, automatic).1);
+            if python_changed || bridge_changed {
+                app.set_python_paths(python, bridge);
+            }
+            let workspace = &app.python_workspace;
+            if let Some(runtime) = &workspace.runtime {
+                let interpreter = workspace.project.as_deref().map_or_else(|| PathBuf::from(&runtime.python), |root| runtime.python(root));
+                let paths =
+                    [(tr("settings.python_active"), interpreter.as_path()), (tr("settings.python_active_bridge"), Path::new(&runtime.bridge))];
+                for (label, path) in paths {
+                    let value = if path.as_os_str().is_empty() { tr("settings.python_missing").into() } else { path.display().to_string() };
+                    ui.add(egui::Label::new(format!("{label}: {value}")).wrap());
+                }
+            }
+        });
+        kit::settings_section(ui, "python-packages", tr("settings.python_packages"), |ui| {
+            let workspace = &mut app.python_workspace;
+            let Some(project) = &workspace.project else {
+                kit::text(ui, tr("settings.python_choose_project"), kit::Text::Note("settings.python_choose_project"));
+                return;
+            };
+            ui.add(egui::Label::new(project.display().to_string()).wrap());
+            ui.add_enabled_ui(workspace.job.is_none(), |ui| {
+                let submit = kit::row(ui, tr("settings.python_package"), |ui| kit::text_field(ui, &mut workspace.package, "scipy").0);
+                ui.horizontal_wrapped(|ui| {
+                    let sync = kit::button(ui, tr("settings.python_sync"), kit::Button::Normal).clicked();
+                    let add = kit::button(ui, tr("settings.python_add"), kit::Button::Normal).clicked() || submit;
+                    if (add || sync)
+                        && let Err(error) = workspace.uv(add)
+                    {
+                        workspace.environment_status = Some(Err(error));
+                    }
+                });
+            });
+            if let Some(status) = &workspace.environment_status {
+                match status {
+                    Ok(text) => ui.label(text),
+                    Err(error) => ui.colored_label(ui.visuals().error_fg_color, error),
+                };
+            }
+        });
+    });
 }
 
 impl Workspace {
@@ -163,7 +210,6 @@ impl Workspace {
                 *action = Some(Action::SetProject);
             }
         });
-        self.environment(ui, action);
         if let Some(error) = &self.error {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
@@ -184,33 +230,6 @@ impl Workspace {
         self.console(ui, &root, action);
     }
 
-    fn environment(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
-        let Some(runtime) = &mut self.runtime else { return };
-        let interpreter = self.project.as_deref().map_or_else(|| PathBuf::from(&runtime.python), |root| runtime.python(root));
-        egui::CollapsingHeader::new("Python Environment").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Base Python");
-                ui.add(TextEdit::singleline(&mut runtime.python).desired_width(f32::INFINITY));
-            });
-            ui.horizontal(|ui| {
-                ui.label("Bridge");
-                ui.add(TextEdit::singleline(&mut runtime.bridge).desired_width(f32::INFINITY));
-            });
-            ui.label(if interpreter.as_os_str().is_empty() { "Python was not found".into() } else { format!("Using {}", interpreter.display()) });
-            ui.add_enabled_ui(self.project.is_some() && self.job.is_none(), |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Sync Environment").clicked() {
-                        *action = Some(Action::Uv(false));
-                    }
-                    ui.add(TextEdit::singleline(&mut self.package).hint_text("scipy").desired_width(160.0));
-                    if ui.button("Add Package").clicked() {
-                        *action = Some(Action::Uv(true));
-                    }
-                });
-            });
-        });
-    }
-
     fn run_bar(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
         ui.horizontal_wrapped(|ui| {
             let idle = self.job.is_none();
@@ -219,13 +238,6 @@ impl Workspace {
                 *action = Some(Action::Case);
             }
             ui.checkbox(&mut self.use_open_model, "Use Open Model");
-            let study = self.study.as_deref().map_or("Open a StudyPype YAML file", filename);
-            if ui.add_enabled(idle && self.study.is_some(), egui::Button::new("Run Study")).on_hover_text(study).clicked() {
-                *action = Some(Action::Study);
-            }
-            if self.study.is_some() {
-                ui.add(TextEdit::singleline(&mut self.task_folder).hint_text("tasks").desired_width(85.0)).on_hover_text("StudyPype job folder");
-            }
             if ui.add_enabled(!idle, egui::Button::new("Stop Job")).clicked() {
                 *action = Some(Action::Stop);
             }
@@ -263,7 +275,7 @@ impl Workspace {
                 }
             });
             let Some(index) = self.active_tab() else {
-                ui.label("Open a Python script, case, or study from Files.");
+                ui.label("Open a Python script or case from Files.");
                 return;
             };
             let Some(tab) = self.tabs.get_mut(index) else { return };
@@ -529,7 +541,7 @@ mod tests {
     fn dock_reserves_right_hand_space_and_undocking_restores_it() {
         let ctx = egui::Context::default();
         let mut app = ModelApp::new(fieldcraft_engine::Session::default());
-        app.python_workspace.open(None);
+        app.open_python_workspace();
         let mut available = (0.0, 0.0);
         let mut frame = |app: &mut ModelApp| {
             let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0))), ..Default::default() };

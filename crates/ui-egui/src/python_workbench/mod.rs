@@ -22,6 +22,7 @@ use runtime::Runtime;
 const MAX_FILE: u64 = 1024 * 1024;
 const MAX_TABS: usize = 24;
 const MAX_LOG_LINES: usize = 400;
+const ENVIRONMENT_JOB: &str = "Python environment sync";
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
@@ -35,12 +36,11 @@ pub(crate) struct Workspace {
     tabs: Vec<Document>,
     active: Option<PathBuf>,
     case: Option<PathBuf>,
-    study: Option<PathBuf>,
     last_result: Option<PathBuf>,
     use_open_model: bool,
-    task_folder: String,
     new_path: String,
     package: String,
+    environment_status: Option<Result<String, String>>,
     console: Option<Console>,
     console_input: String,
     job: Option<Job>,
@@ -133,12 +133,8 @@ fn append(log: &mut VecDeque<String>, line: String) {
 }
 
 impl Workspace {
-    pub(crate) fn open(&mut self, model: Option<&str>) {
-        self.open = true;
-        self.runtime.get_or_insert_with(Runtime::detect);
-        if self.task_folder.is_empty() {
-            self.task_folder = "tasks".to_string();
-        }
+    fn prepare(&mut self, model: Option<&str>, python: &str, bridge: &str) {
+        self.runtime.get_or_insert_with(|| Runtime::with_overrides(python, bridge));
         if self.project.is_none()
             && let Some(parent) = model.and_then(|path| Path::new(path).parent()).filter(|path| path.is_absolute())
         {
@@ -161,9 +157,9 @@ impl Workspace {
             self.active = None;
             self.selection = None;
             self.case = None;
-            self.study = None;
             self.last_result = None;
             self.use_open_model = false;
+            self.environment_status = None;
             self.project = Some(project);
         }
         self.folder = folder;
@@ -218,9 +214,6 @@ impl Workspace {
     fn activate(&mut self, path: PathBuf) {
         if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(".case.json")) {
             self.case = Some(path.clone());
-        }
-        if path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| matches!(ext, "yaml" | "yml")) {
-            self.study = Some(path.clone());
         }
         self.selection = None;
         self.active = Some(path);
@@ -376,18 +369,6 @@ impl Workspace {
         Ok(())
     }
 
-    fn run_study(&mut self) -> Result<(), String> {
-        self.idle()?;
-        self.save_all()?;
-        let root = self.root()?;
-        let study = in_project(root, self.study.as_deref().ok_or("Open a StudyPype YAML file first")?)?;
-        let tasks = in_project(root, Path::new(&self.task_folder))?;
-        let mut command = self.runtime()?.command(root, false)?;
-        command.args(["-u", "-c", runtime::RUN_STUDY]).arg(study).arg(tasks);
-        let dir = run_folder(root, "study")?;
-        self.launch(Launch { command, log: dir.join("study.log"), result: None, name: "StudyPype study" })
-    }
-
     fn run_file(&mut self) -> Result<(), String> {
         self.idle()?;
         self.save_all()?;
@@ -427,8 +408,18 @@ impl Workspace {
             command.args(["--", requirement]);
         }
         let dir = run_folder(root, "environment")?;
+        self.launch(Launch { command, log: dir.join("uv.log"), result: None, name: ENVIRONMENT_JOB })?;
         self.console = None;
-        self.launch(Launch { command, log: dir.join("uv.log"), result: None, name: "Python environment sync" })
+        self.environment_status = Some(Ok("Updating the project environment…".into()));
+        Ok(())
+    }
+
+    fn stop_job(&mut self) {
+        if matches!(self.job.as_ref(), Some(Job::Running { name, .. }) if *name == ENVIRONMENT_JOB) {
+            self.environment_status = Some(Ok("Stopped updating the project environment".into()));
+        }
+        self.job = None;
+        append(&mut self.log, "Stopped job".into());
     }
 
     fn poll(&mut self) -> Option<RunResult> {
@@ -468,6 +459,13 @@ impl Workspace {
                 Ok(Some(status)) => {
                     let result = if status.success() { result.take() } else { None };
                     append(&mut self.log, format!("{name} {}", if status.success() { "finished".into() } else { format!("exited: {status}") }));
+                    if *name == ENVIRONMENT_JOB {
+                        self.environment_status = Some(if status.success() {
+                            Ok("Project environment is ready".into())
+                        } else {
+                            Err(format!("uv exited with {status}. See the Python Workspace console for details."))
+                        });
+                    }
                     self.job = None;
                     if let Some(result) = &result {
                         self.last_result = Some(result.path.clone());
@@ -475,11 +473,36 @@ impl Workspace {
                     result
                 }
                 Err(error) => {
+                    if *name == ENVIRONMENT_JOB {
+                        self.environment_status = Some(Err(error.to_string()));
+                    }
                     self.job = None;
                     self.error = Some(error.to_string());
                     None
                 }
             },
+        }
+    }
+}
+
+impl ModelApp {
+    pub(crate) fn prepare_python_workspace(&mut self) {
+        self.python_workspace.prepare(self.session.path.as_deref(), &self.prefs.python_interpreter, &self.prefs.python_bridge);
+    }
+
+    pub(crate) fn open_python_workspace(&mut self) {
+        self.prepare_python_workspace();
+        self.ui.select_tab(fieldcraft_engine::catalogue::Tab::ExternalAnalysis);
+        self.ui.menu = None;
+        self.python_workspace.open = true;
+    }
+
+    pub(crate) fn set_python_paths(&mut self, python: String, bridge: String) {
+        if (self.prefs.python_interpreter.as_str(), self.prefs.python_bridge.as_str()) != (python.as_str(), bridge.as_str()) {
+            self.python_workspace.runtime = Some(Runtime::with_overrides(&python, &bridge));
+            self.prefs.python_interpreter = python;
+            self.prefs.python_bridge = bridge;
+            self.prefs.save(self.services.prefs.as_ref());
         }
     }
 }
@@ -538,7 +561,7 @@ fn show_result(app: &mut ModelApp, path: &Path, view: &PreferredView) -> Result<
 pub(crate) fn poll(app: &mut ModelApp, ctx: &egui::Context) {
     if ctx.input(|input| input.viewport().close_requested()) && app.python_workspace.tabs.iter().any(Document::dirty) {
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        app.python_workspace.open(app.session.path.as_deref());
+        app.open_python_workspace();
         app.python_workspace.error = Some("Save or discard the editor changes before closing FieldCraft".into());
     }
     if let Some(result) = app.python_workspace.poll()
@@ -553,7 +576,7 @@ pub(crate) fn poll(app: &mut ModelApp, ctx: &egui::Context) {
     }
 }
 
-pub(crate) use panel::show;
+pub(crate) use panel::{settings_page, show};
 
 #[cfg(test)]
 mod tests {
@@ -567,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_refuse_to_overwrite_a_script_changed_by_a_study() {
+    fn saves_refuse_to_overwrite_a_script_changed_by_another_job() {
         let dir = std::env::temp_dir().join(format!("fc-python-editor-{}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         let path = dir.join("solve.py");

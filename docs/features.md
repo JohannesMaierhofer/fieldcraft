@@ -2,11 +2,11 @@
 
 Generated from the capability catalogue (`crates/engine/src/catalogue.rs`) by
 `cargo run -p fieldcraft-cli -- features > docs/features.md`; a test fails when it is out of date.
-Every entry is a toolbar button. **Ready** entries run their command; **coming soon** entries are
+Every entry is a toolbar button. **Ready** entries run an engine command or a desktop action. **Coming soon** entries are
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-100 ready, 27 coming soon.
+102 ready, 27 coming soon.
 
 ## Geometry
 
@@ -169,6 +169,13 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Files | Export VTU — Write a solved step as VTK unstructured grids for ParaView | ready | `results.export.vtu`, `results.export.animation`, `results.render.save`, `results.render.delete` |
 | Files | Read Results — Read results in public formats | coming soon (M9) |  |
 | Files | Convergence — Mesh convergence studies | coming soon (M9) |  |
+
+## Python
+
+| Panel | Capability | Status | Command |
+|---|---|---|---|
+| Scripting | Open Python Workspace — Edit and run Python scripts, cases, and selections | ready | `ui.start(ui.python)` |
+| Scripting | Settings — Configure the Python interpreter, NGSolve bridge, and project packages | ready | `ui.start(ui.python.settings)` |
 
 ## Tools
 

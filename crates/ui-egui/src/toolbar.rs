@@ -76,7 +76,7 @@ pub enum Fit {
 /// The buttons a panel shows: its ready entries (at most [`MAX_BUTTONS`]), or its first entry
 /// when none is ready yet.
 pub fn buttons(entries: &'static [Capability]) -> Vec<&'static Capability> {
-    let ready: Vec<_> = entries.iter().filter(|c| c.command().is_some()).take(MAX_BUTTONS).collect();
+    let ready: Vec<_> = entries.iter().filter(|c| c.is_ready()).take(MAX_BUTTONS).collect();
     if ready.is_empty() { entries.first().into_iter().collect() } else { ready }
 }
 
@@ -138,7 +138,7 @@ struct State {
 fn state(app: &ModelApp, c: &Capability) -> State {
     let missing = app.unavailable(c.id);
     State {
-        enabled: c.command().is_some() && missing.is_none(),
+        enabled: c.is_ready() && missing.is_none(),
         running: app.dialog.as_ref().is_some_and(|d| c.command() == Some(d.command)),
         tip: Unavailable::tip(&c.tooltip(), missing.as_ref()),
     }
@@ -152,7 +152,12 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
     // available space is the window below the application bar, which the viewport fills.
     let host = kit::Container::new(ui.ctx(), kit::Surface::Chrome);
     let available = ui.available_rect_before_wrap();
-    let cards = kit::Cards::new(available, kit::LayoutMode::current(ui.ctx()), CARD_HEIGHT, WORKSPACE_WIDTH);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(app.ui.workspace.label().into(), FontId::proportional(solidcraft_theme::Tokens::get().font_button), t.text)
+        .size()
+        .x;
+    let cards = kit::Cards::new(available, kit::LayoutMode::current(ui.ctx()), CARD_HEIGHT, WORKSPACE_WIDTH.max(label_width + 16.0));
     // The band the cards take, from the application bar down to the cards' bottom.
     let band = Rect::from_min_max(available.min, pos2(available.right(), cards.ribbon.bottom()));
     let frame = host.frame(ui.ctx(), t.toolbar, kit::frame::Side::Left);
@@ -359,6 +364,8 @@ pub fn workspace_ids(w: Workspace) -> (&'static str, &'static str) {
         Workspace::Model => ("workspace.model.about", "workspace.model.tabs"),
         Workspace::Analysis => ("workspace.analysis.about", "workspace.analysis.tabs"),
         Workspace::Results => ("workspace.results.about", "workspace.results.tabs"),
+        #[cfg(not(target_arch = "wasm32"))]
+        Workspace::ExternalAnalysis => ("workspace.external_analysis.about", "workspace.external_analysis.tabs"),
     }
 }
 
@@ -444,7 +451,7 @@ fn rows(app: &ModelApp, entries: &'static [Capability]) -> Vec<Row> {
             label: c.label,
             icon: c.id,
             note: c.milestone().map(|m| format!("soon · {m}")).unwrap_or_default(),
-            enabled: c.command().is_some() && missing.is_none(),
+            enabled: c.is_ready() && missing.is_none(),
             tip: Unavailable::tip(&c.tooltip(), missing.as_ref()),
             entry: true,
         });
@@ -558,10 +565,11 @@ pub fn describe(app: &ModelApp) -> serde_json::Value {
                 "tab": c.tab,
                 "panel": c.panel,
                 "command": c.command(),
+                "action": c.desktop_action(),
                 "more": c.more,
                 "covers": c.covers,
                 "coming_soon": c.milestone(),
-                "enabled": c.command().is_some() && missing.is_none(),
+                "enabled": c.is_ready() && missing.is_none(),
                 "unavailable": missing.map(|u| u.to_json()),
                 "rect": shown.map(|(_, r, _)| rect(r)),
                 "fit": shown.map(|(.., f)| f),
@@ -590,8 +598,8 @@ mod tests {
             for p in catalogue::panels(tab) {
                 let b = buttons(p);
                 assert!(!b.is_empty() && b.len() <= MAX_BUTTONS, "{tab:?}");
-                if p.iter().any(|c| c.command().is_some()) {
-                    assert!(b.iter().all(|c| c.command().is_some()));
+                if p.iter().any(Capability::is_ready) {
+                    assert!(b.iter().all(|c| c.is_ready()));
                 }
             }
         }
