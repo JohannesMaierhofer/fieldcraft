@@ -1,6 +1,6 @@
 FieldCraft – external NGSolve runtime
 
-The desktop application runs this solver in a separate Python process. Its numerical and CAD dependencies are installed in that interpreter. The FieldCraft application has its own distribution notices. The bridge carries LICENSE-MIT and LICENSE-APACHE in bridge/.
+The desktop application runs this solver in a separate Python process. Its numerical and CAD dependencies are installed in that interpreter. The FieldCraft application has its own distribution notices.
 
 Package contents and matching sources
 
@@ -32,8 +32,6 @@ The macOS online installer downloads the original external archives on the targe
   https://github.com/numpy/numpy/releases/tag/v2.3.5
   https://gcc.gnu.org/releases.html
 
-• For the external bridge, the source zip itself is installed in extracted form. Its exact commit appears in the installer lock.
-  https://github.com/JohannesMaierhofer/fieldcraft-ngsolve
 
 • uv 0.11.26 (MIT OR Apache-2.0) is installed in the private interpreter. The wheel retains its license and bundled third-party notices.
   https://pypi.org/project/uv/0.11.26/#files

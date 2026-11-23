@@ -1,7 +1,7 @@
 #!/bin/bash
-# Run the installed bridge and chosen solver with the package's private Python.
+# Run a native FieldCraft analysis with the installed private Python.
 set -eu
 root=$(cd "$(dirname "$0")" && pwd)
-unset PYTHONHOME PYTHONPATH
-export PYTHONNOUSERSITE=1
-exec "$root/python/bin/python3" -s "$root/bridge/workflow.py" "$@"
+volume=$(cd "$root/../../../.." && pwd)
+cli="${FIELDCRAFT_CLI:-${volume%/}/Applications/FieldCraft.app/Contents/MacOS/fieldcraft-cli}"
+exec "$cli" ngsolve "$@" --python "$root/python/bin/python3"

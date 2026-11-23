@@ -16,7 +16,7 @@ fi
 lock_sha=$(/usr/bin/shasum -a 256 "$lock" | /usr/bin/awk '{print $1}')
 version="cpython313-ngsolve2608-$target-${lock_sha:0:16}"
 mkdir -p "$root/runtimes"
-for link in current python bridge; do
+for link in current python; do
     if [[ -e "$root/$link" && ! -L "$root/$link" ]]; then
         echo "Unmanaged installation path: $root/$link" >&2
         exit 1
@@ -53,15 +53,14 @@ PYTHON_SMOKE
 if [[ ! -e "$package_dir" ]]; then
     mkdir "$stage/downloads" "$stage/payload"
     wheels=()
-    runtime=''; bridge=''
+    runtime=''
     while read -r digest url; do
         [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
         case "$url" in
-            https://github.com/astral-sh/python-build-standalone/releases/download/*|https://files.pythonhosted.org/packages/*|https://codeload.github.com/JohannesMaierhofer/fieldcraft-ngsolve/zip/*) ;;
+            https://github.com/astral-sh/python-build-standalone/releases/download/*|https://files.pythonhosted.org/packages/*) ;;
             *) echo "Unexpected runtime download host." >&2; exit 1 ;;
         esac
         name=${url##*/}; name=${name//%2B/+}
-        if [[ "$url" == https://codeload.github.com/* ]]; then name="bridge-$name.zip"; fi
         if [[ -d "$here/offline" ]]; then
             input="$here/offline/$name"
         else
@@ -76,20 +75,15 @@ if [[ ! -e "$package_dir" ]]; then
         case "$name" in
             *.tar.gz) runtime="$input" ;;
             *.whl) wheels+=("$input") ;;
-            bridge-*.zip) bridge="$input" ;;
             *) exit 1 ;;
         esac
     done < "$lock"
-    [[ -n "$runtime" && -n "$bridge" && ${#wheels[@]} -gt 0 ]]
+    [[ -n "$runtime" && ${#wheels[@]} -gt 0 ]]
     tar -xzf "$runtime" -C "$stage/payload"
     python="$stage/payload/python/bin/python3"
     PIP_CONFIG_FILE=/dev/null "$python" -I -B -m pip --isolated --no-cache-dir --disable-pip-version-check install \
         --no-index --no-deps --no-compile --no-warn-script-location "${wheels[@]}"
     "$python" -I -B -m pip --isolated --no-cache-dir --disable-pip-version-check check
-    /usr/bin/unzip -q "$bridge" -d "$stage/bridge-source"
-    directories=("$stage"/bridge-source/fieldcraft-ngsolve-*)
-    [[ ${#directories[@]} == 1 && -f "${directories[0]}/workflow.py" && -f "${directories[0]}/show_run.py" ]]
-    mv "${directories[0]}" "$stage/payload/bridge"
     cp "$lock" "$stage/payload/runtime.lock"
     smoke "$python"
     # Rename atomically. If an identical installer wins the race, retain the
@@ -114,10 +108,8 @@ cp "$here/NOTICE.txt" "$stage/NOTICE.txt"
 /bin/mv -fh "$stage/NOTICE.txt" "$package_dir/NOTICE.txt"
 ln -s "runtimes/$version" "$stage/current"
 /bin/mv -fh "$stage/current" "$root/current"
-for link in python bridge; do
-    ln -s "current/$link" "$stage/$link"
-    /bin/mv -fh "$stage/$link" "$root/$link"
-done
+ln -s "current/python" "$stage/python"
+/bin/mv -fh "$stage/python" "$root/python"
 # Update the installed command on every installer run, including runtime reuse.
 cp "$here/fieldcraft-ngsolve" "$stage/fieldcraft-ngsolve"
 chmod 755 "$stage/fieldcraft-ngsolve"

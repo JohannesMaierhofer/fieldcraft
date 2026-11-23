@@ -1,6 +1,6 @@
 # FieldCraft with an external NGSolve runtime
 
-The Windows installer sets up FieldCraft for the current user. Start it from the Start menu. The Linux amd64 package supports Ubuntu 22.04 or later. Install it with `sudo apt install ./fieldcraft-ngsolve-linux-x64.deb` and select **FieldCraft with NGSolve** from the applications menu. Both installers carry the application, command-line interface, bridge, examples and a private CPython environment with the pinned wheels. On Linux, apt resolves the system graphics libraries.
+The Windows installer sets up FieldCraft for the current user. Start it from the Start menu. The Linux amd64 package supports Ubuntu 22.04 or later. Install it with `sudo apt install ./fieldcraft-ngsolve-linux-x64.deb` and select **FieldCraft with NGSolve** from the applications menu. Both installers carry the application, command-line interface and a private CPython environment with the pinned wheels. On Linux, apt resolves the system graphics libraries.
 
 | Installer | Native FieldCraft app and CLI | External solver |
 |---|---|---|
@@ -12,30 +12,23 @@ A Linux ARM64 installer requires compatible NGSolve and Netgen binaries. NGSolve
 
 ## First calculation
 
-In **External Analysis**, use **Open Python Workspace** to edit and run desktop cases. Choose **Settings** to manage project packages with the bundled uv. See [Python Workspace](../../docs/python-workspace.md) for interactive execution and project environments.
+In **External Analysis**, choose **Open Python Workspace**, open your analysis definition (`.analysis.json`), and choose **Run Analysis**. FieldCraft exports the mesh, starts NGSolve in the private interpreter, and displays the selected result. Use **Settings** to manage project packages with the installed uv. [Python Workspace](../../docs/python-workspace.md)
 
-Create a writable model directory. Copy the three files under `bridge/samples` into it and mesh the slab. The case command runs the selected script and opens its field and energy in a new FieldCraft window.
-
-Linux shell:
+Run the same analysis headlessly with the installed launcher. The output directory must be new.
 
 ```sh
-bridge=/opt/fieldcraft-ngsolve/bridge
-cp "$bridge"/samples/* .
-fieldcraft-ngsolve-cli run slab.json
-fieldcraft-ngsolve case slab.case.json first-run --gui /usr/bin/fieldcraft-ngsolve-gui
+fieldcraft-ngsolve run slab.analysis.json first-run
 ```
 
-Windows PowerShell, using the default installation path:
+On Windows, use the launcher in the installation folder.
 
 ```powershell
 $fc = Join-Path $env:LOCALAPPDATA 'Programs/FieldCraft-NGSolve'
-Copy-Item "$fc/bridge/samples/*" .
-& "$fc/fieldcraft-cli.exe" run slab.json
-& "$fc/fieldcraft-ngsolve.cmd" case slab.case.json first-run --gui "$fc/fieldcraft.exe"
+& "$fc/fieldcraft-ngsolve.cmd" run slab.analysis.json first-run
 ```
 
-The case file records the input model, script, named materials and boundaries, and preferred field. Change those entries for another example. To run a different NGSolve installation, pass its interpreter with `--python /path/to/python` or `--python C:\path\to\python.exe`. Running the case without `--gui` writes the fields and integrals for later viewing. Use `bridge/show_run.py` with the private interpreter to select an existing desktop instance or another field.
+For another interpreter, invoke the platform's FieldCraft CLI as `fieldcraft-cli ngsolve run slab.analysis.json first-run --python /path/to/python`. Open the output manifest from the matching model's Python Workspace to view the result later.
 
 ## Build and verification
 
-The fork workflow pins the FieldCraft source separately from the installer branch. It builds native binaries on each target, installs the resulting package, verifies the runtime versions, solves the 1 V slab and checks its electrostatic energy against 4.4270939064 × 10⁻¹⁴ J. The verification stage imports both fields and captures the installed desktop window. Actions artifacts are available after that job passes. The installer and its download include [the external runtime notices and source references](SOLVER-NOTICES.txt). Python package notices stay with their original installed distributions. The Python distribution, external bridge and FieldCraft each include their licence files.
+The fork workflow builds FieldCraft from the same commit as the installer recipe. It builds native binaries on each target, installs the resulting package, verifies the runtime versions, solves the 1 V slab and checks its electrostatic energy against 4.4270939064 × 10⁻¹⁴ J. The verification stage imports both fields and captures the installed desktop window. Actions artifacts are available after that job passes. The installer and its download include [the external runtime notices and source references](SOLVER-NOTICES.txt). Python package notices stay with their original installed distributions. The Python distribution and FieldCraft each include their license files.

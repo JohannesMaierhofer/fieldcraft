@@ -59,11 +59,10 @@ try {
         $runtime | Add-Member -NotePropertyName solver_pe_machine -NotePropertyValue ('0x{0:x4}' -f (PeMachine $python))
     }
     $runtime | ConvertTo-Json | Set-Content runtime.json
-    & $python -m unittest discover -s "$homeDir/bridge" -p 'test_*.py'
     & $cli --version
-    Copy-Item "$homeDir/bridge/samples/*" .
+    & "$PSScriptRoot/fixtures.ps1" -Directory $out -Scenario electrostatic
     & $cli run slab.json
-    & $launcher case slab.case.json first-run
+    & $launcher run slab.analysis.json first-run
     $m = Get-Content -Raw first-run/results.json | ConvertFrom-Json
     $e = $m.integrals | Where-Object name -eq stored_energy
     $reference = 4.4270939064e-14
@@ -76,43 +75,37 @@ try {
     $port = 28744
     $app = Start-Process $gui -ArgumentList "--control $port" -PassThru -RedirectStandardError "$out/gui.stderr"
     try {
-        $ready = $false
-        for ($n=0; $n -lt 120 -and -not $ready; $n++) {
-            if ($app.HasExited) { throw "FieldCraft exited with $($app.ExitCode): $(Get-Content "$out/gui.stderr" -Raw)" }
-            $socket = [Net.Sockets.TcpClient]::new()
-            try { $socket.Connect('127.0.0.1',$port); $ready = $true } catch { Start-Sleep -Milliseconds 500 } finally { $socket.Dispose() }
-        }
-        if (-not $ready) { throw 'No GUI control listener after 60 seconds' }
         $capture = @'
 import json
 from pathlib import Path
 import sys
 import time
-sys.path.insert(0, sys.argv[1])
-from show_run import Control
+from verify_ui import connect, open_run
 
-control = Control(int(sys.argv[2]))
-window = Path(sys.argv[3])
+control = connect(int(sys.argv[1]))
+manifest, record = open_run(control, 'first-run')
+out = Path(sys.argv[2]).resolve()
+control('engine.execute', dict(command='results.external.integrals', params=dict(path=str(manifest))))
 control('ui.move', {'x': 3, 'y': 3})
-time.sleep(.35)
-state = control('ui.inspect', {})
-proof = {key: state.get(key) for key in ('nodes', 'elements', 'renderer', 'adapter', 'results')}
-window.with_suffix('.json').write_text(json.dumps(proof, indent=2), encoding='utf-8')
-print(control('ui.capture', dict(path=str(window), width=1200, height=760, scale=1)))
-if window.stat().st_size < 1000:
-    raise ValueError('Missing native window capture')
-# End the test through the normal app lifecycle after the final screenshot.
-if len(sys.argv) == 5 and sys.argv[4] == 'quit':
-    control('app.quit', {})
+for entry, label in zip(record['fields'], ('window', 'vector'), strict=True):
+    path = str(manifest.parent / entry['file'])
+    params = dict(path=path, **({'component':'x'} if entry['name'] == 'electric_field' else {}))
+    shown = control('engine.execute', dict(command='results.external.contour', params=params))
+    assert shown['shown'], shown
+    time.sleep(.35)
+    state = control('ui.inspect')
+    proof = {key: state.get(key) for key in ('nodes', 'elements', 'renderer', 'adapter', 'results')}
+    window = out / (label + '.png')
+    window.with_suffix('.json').write_text(json.dumps(proof, indent=2), encoding='utf-8')
+    control('ui.capture', dict(path=str(window), width=1200, height=760, scale=1))
+    assert window.stat().st_size >= 1000, 'Missing native window capture'
+control('app.quit')
 '@
-        & $python "$homeDir/bridge/show_run.py" first-run --port $port --field potential --integrals --open-model
-        & $python -c $capture "$homeDir/bridge" $port "$out/window.png"
-        & $python "$homeDir/bridge/show_run.py" first-run --port $port --field electric_field --component x
-        & $python -c $capture "$homeDir/bridge" $port "$out/vector.png" quit
+        & $python -c $capture $port $out
         if (-not $app.WaitForExit(15000)) { throw 'FieldCraft did not close after app.quit' }
         if ($app.ExitCode -ne 0) { throw "FieldCraft exited with code $($app.ExitCode)" }
     } finally { if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() } }
-    & "$PSScriptRoot/verify-series.ps1" -Bridge "$homeDir/bridge" -Python $python -Cli $cli -Gui $gui -Launcher $launcher -OutputDir $out
+    & "$PSScriptRoot/verify-series.ps1" -Python $python -Cli $cli -Gui $gui -Launcher $launcher -OutputDir $out
 } finally {
     Pop-Location
     if ($xserver -and -not $xserver.HasExited) { $xserver.Kill() }

@@ -114,11 +114,10 @@ jobs:
           cli="$app/Contents/MacOS/fieldcraft-cli"
           lipo "$cli" -verify_arch "$ARCH"
           "$home/python/bin/python3" -I -c 'import platform,sys; assert platform.machine() == sys.argv[1]' "$ARCH"
-          mkdir -p "$RUNNER_TEMP/slab"
+          pwsh -File packaging/ngsolve/fixtures.ps1 -Directory "$RUNNER_TEMP/slab" -Scenario electrostatic
           cd "$RUNNER_TEMP/slab"
-          cp "$home/bridge/samples/"* .
           "$cli" run slab.json
-          PYTHONHOME=/unrelated-python PYTHONPATH=/unrelated-python "$home/fieldcraft-ngsolve" case slab.case.json result
+          PYTHONHOME=/unrelated-python PYTHONPATH=/unrelated-python "$home/fieldcraft-ngsolve" run slab.analysis.json result
           "$cli" run result/view-1.json
           jq --arg path "$PWD/result/results.json" '. + [{"command":"results.external.integrals","params":{"path":$path}}]' result/view-2.json > result/view-vector-and-integrals.json
           "$cli" run result/view-vector-and-integrals.json
@@ -128,7 +127,7 @@ jobs:
         run: |
           $fcRuntime = '/Library/Application Support/FieldCraft/NGSolve'
           $fcApp = '/Applications/FieldCraft.app/Contents/MacOS'
-          ./packaging/ngsolve/verify-series.ps1 -Bridge "$fcRuntime/bridge" -Python "$fcRuntime/python/bin/python3" -Cli "$fcApp/fieldcraft-cli" -Gui "$fcApp/FieldCraft" -Launcher "$fcRuntime/fieldcraft-ngsolve" -OutputDir "$PWD/verification"
+          ./packaging/ngsolve/verify-series.ps1 -Python "$fcRuntime/python/bin/python3" -Cli "$fcApp/fieldcraft-cli" -Gui "$fcApp/FieldCraft" -Launcher "$fcRuntime/fieldcraft-ngsolve" -OutputDir "$PWD/verification"
       - name: Upload measured time series, playback states and window captures
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
