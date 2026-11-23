@@ -320,6 +320,16 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "path_plot":app.path_editor.as_ref().map(|e|json!({"params":e.params(&app.session).ok(),"picking":e.picking,"selected":e.selected})),
         })),
         "ui.toolbar" => ok(crate::toolbar::describe(app)),
+        #[cfg(not(target_arch = "wasm32"))]
+        "ui.python" => {
+            if p.get("inspect").and_then(Value::as_bool) != Some(true) {
+                app.python_workspace.open(app.session.path.as_deref());
+                if let Some(detached) = p.get("detached").and_then(Value::as_bool) {
+                    app.python_workspace.set_detached(detached);
+                }
+            }
+            ok(app.python_workspace.inspect())
+        }
         "ui.path" => wrap(path_action(app, p)),
         "ui.settings" => wrap(crate::settings::from_control(app, p)),
         "ui.select" if p.get("kind").is_none() && VIEWPORT_SELECT.iter().any(|k| p.get(*k).is_some()) => wrap(select(app, p)),

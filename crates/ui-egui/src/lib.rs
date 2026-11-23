@@ -50,6 +50,8 @@ pub mod node_move;
 pub mod palette;
 pub mod path_panel;
 pub mod privacy;
+#[cfg(not(target_arch = "wasm32"))]
+mod python_workbench;
 pub mod reply;
 pub mod report;
 pub mod results;
@@ -411,6 +413,8 @@ struct Shot {
 
 pub struct ModelApp {
     pub session: Session,
+    #[cfg(not(target_arch = "wasm32"))]
+    python_workspace: python_workbench::Workspace,
     pub ui: UiState,
     pub cam: Camera,
     pub status: Option<Status>,
@@ -603,6 +607,8 @@ impl ModelApp {
         session.origin.get_or_insert(fieldcraft_engine::usage::Origin::Ui);
         ModelApp {
             session,
+            #[cfg(not(target_arch = "wasm32"))]
+            python_workspace: Default::default(),
             ui: UiState::default(),
             cam: Camera::default(),
             status: None,
@@ -2300,6 +2306,8 @@ impl ModelApp {
             self.styled = Some(self.ui.dark);
         }
         self.drain_control(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        python_workbench::poll(self, ctx);
         if self.poll_loading() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
@@ -2494,6 +2502,8 @@ impl ModelApp {
         self.layout.clear();
         appbar::app_bar(self, ui);
         status_bar::show(self, ui);
+        #[cfg(not(target_arch = "wasm32"))]
+        python_workbench::show(self, ui);
         // The start page takes the workspace's place while it is up.
         if !start::page(self, ui) {
             self.shell(ui);
