@@ -21,4 +21,15 @@ RUN cargo xwin --version && command -v llvm-rc && command -v lld-link && makensi
 WORKDIR /build
 COPY setup.nsi install.ps1 INSTALL.txt package-docker.sh /opt/fieldcraft/
 COPY --chmod=0755 arm64-gnu-clang /opt/fieldcraft/arm64-tools/clang
+# Debian exposes the GNU driver as clang. The driver's invocation name selects
+# CL mode, which the Windows resource preprocessor requests explicitly.
+RUN if ! command -v clang-cl >/dev/null; then ln -s /opt/llvm-tools/clang /usr/local/bin/clang-cl; fi \
+    && printf 'int fieldcraft_arch_probe(void) { return 0; }\n' > /tmp/fc.c \
+    && clang-cl --target=x86_64-pc-windows-msvc /nologo /c /tmp/fc.c /Fo/tmp/fc-x64.obj \
+    && llvm-readobj --file-headers /tmp/fc-x64.obj | grep -F 'Machine: IMAGE_FILE_MACHINE_AMD64 (' \
+    && clang-cl --target=aarch64-pc-windows-msvc /nologo /c /tmp/fc.c /Fo/tmp/fc-arm64.obj \
+    && llvm-readobj --file-headers /tmp/fc-arm64.obj | grep -F 'Machine: IMAGE_FILE_MACHINE_ARM64 (' \
+    && /opt/fieldcraft/arm64-tools/clang --target=aarch64-pc-windows-msvc /imsvc /tmp -c /tmp/fc.c -o /tmp/fc-gnu.obj \
+    && llvm-readobj --file-headers /tmp/fc-gnu.obj | grep -F 'Machine: IMAGE_FILE_MACHINE_ARM64 (' \
+    && rm /tmp/fc.c /tmp/fc-x64.obj /tmp/fc-arm64.obj /tmp/fc-gnu.obj
 ENTRYPOINT ["/bin/bash", "/opt/fieldcraft/package-docker.sh"]
