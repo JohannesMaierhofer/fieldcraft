@@ -17,6 +17,10 @@ runtime="/Library/Application Support/FieldCraft/NGSolve"
   --gui /Applications/FieldCraft.app/Contents/MacOS/FieldCraft
 ```
 
+The installer places **Run NGSolve Case.command** next to FieldCraft in Applications. Double-click it, choose a case JSON file, and wait for FieldCraft to open the results. The case selects both the mesh and the Python script. The launcher uses the installed interpreter and writes a separate log under `calculations/` next to the case for each attempt. Python tracebacks include the script, line number, and exception. Fix the script, save it, and open the same case again. Each successful calculation has its own result directory.
+
+For a numbered package revision, pass both `--package-version 0.8.1.2` and `--desktop-revision <full-commit-sha>`. The packager verifies the bundle signature, the revision in the app, and the architecture of both executables before staging them.
+
 The launcher excludes Python user packages and inherited Python library paths. The same invocation without `--gui` creates the result files headlessly. `bridge/show_run.py` can select a different field or show integrals on a running FieldCraft control port.
 
 The Python-build-standalone GitHub release `20261110` publishes the interpreter hashes in its asset metadata. Wheel hashes are the digests of the exact macOS files on each pinned PyPI release. Both architecture locks preserve complete `https` URLs and SHA-256 digests. The installer artifact includes [the external runtime notices and source references](../../ngsolve/SOLVER-NOTICES.txt). The same text is installed as `current/NOTICE.txt`. At install time the private runtime keeps the original Python license under `lib/python3.13/LICENSE.txt` and the original legal notices from each wheel. See [Python-build-standalone](https://github.com/astral-sh/python-build-standalone/releases/tag/20261110), [NGSolve](https://pypi.org/project/ngsolve/6.2.2608/), [Netgen](https://pypi.org/project/netgen-mesher/6.2.2608/), [OCCT wheels](https://pypi.org/project/netgen-occt/7.8.1/) and [NumPy](https://pypi.org/project/numpy/2.3.5/).

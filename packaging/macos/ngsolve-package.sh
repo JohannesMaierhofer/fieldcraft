@@ -3,13 +3,15 @@
 set -euo pipefail
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 here=$(cd "$(dirname "$0")" && pwd)
-usage() { echo "Usage: $0 --app FieldCraft.app --arch x86_64|arm64 --output result.pkg [--offline-cache DIR]" >&2; exit 2; }
-app=''; arch=''; out=''; cache=''
+usage() { echo "Usage: $0 --app FieldCraft.app --arch x86_64|arm64 --output result.pkg [--offline-cache DIR] [--package-version X.Y.Z.N] [--desktop-revision SHA]" >&2; exit 2; }
+app=''; arch=''; out=''; cache=''; package_version=''; desktop_revision=''
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --app) app=$2; shift 2 ;;
         --arch) arch=$2; shift 2 ;;
         --output) out=$2; shift 2 ;;
+        --package-version) package_version=$2; shift 2 ;;
+        --desktop-revision) desktop_revision=$2; shift 2 ;;
         --offline-cache) cache=$2; shift 2 ;;
         *) usage ;;
     esac
@@ -20,13 +22,24 @@ done
 if [[ -n "$cache" && ! -d "$cache" ]]; then echo "Missing offline cache" >&2; exit 1; fi
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][[:alnum:].-]+)?$ ]] || usage
+if [[ -n "$package_version" ]]; then
+    [[ "$package_version" =~ ^[0-9]+([.][0-9]+){2,3}$ ]] || usage
+    version=$package_version
+fi
+if [[ -n "$desktop_revision" ]]; then
+    [[ "$desktop_revision" =~ ^[0-9a-f]{40}$ ]] || usage
+    embedded=$(/usr/libexec/PlistBuddy -c 'Print :FieldCraftBuildCommit' "$app/Contents/Info.plist")
+    [[ "$embedded" == "$desktop_revision" ]] || { echo "Unexpected FieldCraft desktop revision: $embedded" >&2; exit 1; }
+fi
 executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
 /usr/bin/lipo "$app/Contents/MacOS/$executable" -verify_arch "$arch"
+/usr/bin/lipo "$app/Contents/MacOS/fieldcraft-cli" -verify_arch "$arch"
 /usr/bin/codesign --verify --strict --deep "$app"
 work=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/fc-ngsolve.XXXXXXXX")
 cleanup() { /bin/rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work/scripts" "$work/apps"
+/usr/bin/install -m 755 "$here/ngsolve/Run NGSolve Case.command" "$work/apps/Run NGSolve Case.command"
 cp "$here/ngsolve/$arch.lock" "$work/scripts/runtime.lock"
 cp "$here/ngsolve/postinstall" "$here/ngsolve/fieldcraft-ngsolve" "$work/scripts/"
 cp "$here/../ngsolve/SOLVER-NOTICES.txt" "$work/scripts/NOTICE.txt"
