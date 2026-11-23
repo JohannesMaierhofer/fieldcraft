@@ -874,7 +874,7 @@ pub static CATALOGUE: &[Capability] = &[
     #[cfg(not(target_arch = "wasm32"))]
     desktop("ui.python", "Open Python Workspace", "Edit and run Python scripts, cases, and selections"),
     #[cfg(not(target_arch = "wasm32"))]
-    desktop("ui.python.settings", "Settings", "Configure the Python interpreter, NGSolve bridge, and project packages"),
+    desktop("ui.python.settings", "Settings", "Configure the Python interpreter and project packages"),
     // ---- Tools ----
     // Renaming starts from a definition's item menu (Rename…); the search finds it here too.
     ready_more("model.info", "Model Info", Tools, "Model", "Node and element counts and the model summary", &["model.rename"]),

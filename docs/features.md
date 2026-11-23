@@ -175,7 +175,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Panel | Capability | Status | Command |
 |---|---|---|---|
 | Scripting | Open Python Workspace — Edit and run Python scripts, cases, and selections | ready | `ui.start(ui.python)` |
-| Scripting | Settings — Configure the Python interpreter, NGSolve bridge, and project packages | ready | `ui.start(ui.python.settings)` |
+| Scripting | Settings — Configure the Python interpreter and project packages | ready | `ui.start(ui.python.settings)` |
 
 ## Tools
 

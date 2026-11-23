@@ -332,6 +332,19 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             }
             ok(app.python_workspace.inspect())
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        "ui.python.run" => {
+            let Some(path) = s("path") else { return err("missing analysis file path") };
+            match app.run_python_analysis(Some(std::path::Path::new(path))) {
+                Ok(()) => ok(app.python_workspace.inspect()),
+                Err(error) => err(error),
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        "ui.python.newAnalysis" => match app.new_python_analysis() {
+            Ok(()) => ok(app.python_workspace.inspect()),
+            Err(error) => err(error),
+        },
         "ui.path" => wrap(path_action(app, p)),
         "ui.settings" => wrap(crate::settings::from_control(app, p)),
         "ui.select" if p.get("kind").is_none() && VIEWPORT_SELECT.iter().any(|k| p.get(*k).is_some()) => wrap(select(app, p)),

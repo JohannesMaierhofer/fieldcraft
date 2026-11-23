@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 mod crashes;
+mod ngsolve;
 mod snapshot;
 mod update;
 
@@ -26,6 +27,8 @@ usage:
   fieldcraft-cli commands --json       the same as JSON, each command's parameters as JSON Schema
   fieldcraft-cli run <script.json>     run a script (a JSON array of {\"command\", \"params\"})
                                        and print the model summary
+  fieldcraft-cli ngsolve run <analysis.analysis.json> <output> --python PATH
+                                       run an NGSolve analysis in a separate Python process
   fieldcraft-cli snapshot <script.json> --out FILE.png [--view V | --camera JSON]
                       [--size WxH] [--section x|y|z[=VALUE]] [--field FIELD]
                                        run a script and draw the model to a PNG with no
@@ -128,6 +131,7 @@ fn command(args: &[String], out: &mut impl Write) -> Result<(), Error> {
             }
         }
         Some("features") => write!(out, "{}", fieldcraft_engine::catalogue::features_page())?,
+        Some("ngsolve") => ngsolve::run(args.get(1..).unwrap_or_default(), out)?,
         Some("mcp") => mcp(args.get(1..).unwrap_or(&[]), out)?,
         Some("crashes") => crashes::run(args.get(1..).unwrap_or(&[]), out)?,
         Some("update") => update::run(args.get(1..).unwrap_or(&[]), out)?,

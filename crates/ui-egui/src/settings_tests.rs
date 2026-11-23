@@ -177,11 +177,11 @@ fn external_analysis_actions_open_python_settings_and_the_workspace() {
     assert_eq!(super::describe(&app)["page"], "python");
     assert_eq!(app.python_workspace.inspect()["open"], false);
 
-    let update = json!({"set": {"python_interpreter": "/opt/example/python3", "python_bridge": "/opt/example/bridge"}});
+    let update = json!({"set": {"python_interpreter": "/opt/example/python3"}});
     assert_eq!(super::from_control(&mut app, &update).unwrap()["values"]["python_interpreter"], "/opt/example/python3");
-    assert_eq!(Prefs::load(app.services.prefs.as_ref()).python_bridge, "/opt/example/bridge");
+    assert_eq!(Prefs::load(app.services.prefs.as_ref()).python_interpreter, "/opt/example/python3");
     assert_eq!(super::from_control(&mut app, &json!({"press": "cancel"})).unwrap()["values"]["python_interpreter"], "");
-    assert!(Prefs::load(app.services.prefs.as_ref()).python_bridge.is_empty());
+    assert!(Prefs::load(app.services.prefs.as_ref()).python_interpreter.is_empty());
 
     app.start_programmatic("ui.python").unwrap();
     let workspace = app.python_workspace.inspect();
