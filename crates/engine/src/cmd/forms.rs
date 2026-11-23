@@ -2637,6 +2637,7 @@ pub const IMPORT_ORPHAN: &[Field] = &[
         .def("\"refuse\""),
 ];
 pub const EXTERNAL_CONTOUR: &[Field] = &[
+    flag("show", "Show contour").help("Turn off to clear the external contour.").def("true"),
     path("path", "Nodal field", false).help("Choose a field from an external run on this mesh."),
     text("entry", "Catalog entry").help("Alternatively select a field by its name in the current run."),
     choice("component", "Vector component", &[("auto", "Scalar value or vector magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])

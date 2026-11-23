@@ -245,12 +245,13 @@ pub(crate) struct Selection {
 impl Selection {
     pub(crate) fn resolve(s: &Session, p: &Value, kind: Kind) -> Result<Self> {
         let rows = s.external_catalog().map_or(&[][..], |catalog| kind.rows(catalog));
-        if let Some(name) = opt::<&str>(p, "entry")? {
-            if p.get("path").is_some() {
-                return Err(invalid("choose either an external result path or a catalog entry"));
+        match (p.get("path"), opt::<&str>(p, "entry")?) {
+            (Some(_), None) => {}
+            (None, Some(name)) => {
+                let row = rows.iter().find(|row| row.name == name).ok_or_else(|| invalid("unknown external result entry on this mesh"))?;
+                return Self::from_row(s, kind, row);
             }
-            let row = rows.iter().find(|row| row.name == name).ok_or_else(|| invalid("unknown external result entry on this mesh"))?;
-            return Self::from_row(s, kind, row);
+            _ => return Err(invalid("give one of `path` or `entry` to select an external result")),
         }
         let path = file_param(s, p, "path", Access::Read)?;
         if let Some(supplied) = p.get("path").and_then(Value::as_str)
@@ -322,6 +323,17 @@ mod tests {
             "integrals":[{"name":"force","unit":"N","value":[0.,1.,2.]}]});
         fs::write(&manifest, run.to_string()).unwrap();
         (dir, s, manifest, run)
+    }
+
+    #[test]
+    fn selecting_an_external_result_requires_exactly_one_source() {
+        let mut session = Session::default();
+        for command in ["results.external.contour", "results.external.series"] {
+            for params in [json!({}), json!({"path":"field.json","entry":"B"})] {
+                let err = session.execute(command, &params).unwrap_err().to_string();
+                assert!(err.contains("`path`") && err.contains("`entry`"), "{command}: {err}");
+            }
+        }
     }
 
     #[test]
