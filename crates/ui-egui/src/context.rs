@@ -32,8 +32,12 @@ pub fn has_context(app: &mut ModelApp) -> bool {
         || app.selected_seed.is_some()
         || app.selected_mesh
         || app.reply.is_some()
-        || app.session.external_series().is_some()
+        || has_external_controls(app)
         || app.plot().is_some()
+}
+
+fn has_external_controls(app: &ModelApp) -> bool {
+    app.session.external_series().is_some() || app.session.external_contour().is_some_and(|f| f.has_displacements())
 }
 
 /// A card the right side may show: the open command's form, which draws itself, or another.
@@ -52,7 +56,7 @@ enum Info {
     Seed(fieldcraft_model::GeometryRef),
     Mesh,
     Results(std::sync::Arc<crate::results::Plot>),
-    ExternalSeries,
+    ExternalResults,
 }
 
 impl Card {
@@ -74,7 +78,7 @@ impl Info {
             Info::Seed(_) => "context:seed",
             Info::Mesh => "context:mesh",
             Info::Results(_) => "context:results",
-            Info::ExternalSeries => "context:external-series",
+            Info::ExternalResults => "context:external-series",
         }
     }
 
@@ -89,7 +93,11 @@ impl Info {
             Info::Seed(_) => ("mesh.seed.edge".into(), "Seed".into()),
             Info::Mesh => ("mesh.tet.generate".into(), "Mesh".into()),
             Info::Results(_) => ("results.deformed".into(), "Results".into()),
-            Info::ExternalSeries => ("results.animate".into(), "External Time Series".into()),
+            Info::ExternalResults => match app.session.external_series() {
+                Some(series) if series.is_time() => ("results.animate".into(), "External Time Series".into()),
+                Some(_) => ("results.animate".into(), "External Parameter Series".into()),
+                None => ("results.deformed".into(), "External Displacement".into()),
+            },
         }
     }
 }
@@ -167,7 +175,7 @@ fn cards(app: &mut ModelApp) -> Vec<Card> {
     let mut out: Vec<Card> = first.into_iter().collect();
     match app.plot() {
         Some(plot) if !reply_beside_form => out.push(Card::Info(Info::Results(plot))),
-        _ if !reply_beside_form && app.session.external_series().is_some() => out.push(Card::Info(Info::ExternalSeries)),
+        _ if !reply_beside_form && has_external_controls(app) => out.push(Card::Info(Info::ExternalResults)),
         _ => out.extend(ranked.next()),
     }
     out
@@ -274,7 +282,7 @@ fn body(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, card: &Info) {
         Info::Seed(edge) => seed_card(app, ui, edge.clone()),
         Info::Mesh => mesh_card(app, ui, t),
         Info::Results(plot) => crate::results_panel::controls(app, plot, ui, t),
-        Info::ExternalSeries => crate::results_panel::external_controls(app, ui),
+        Info::ExternalResults => crate::results_panel::external_controls(app, ui),
         Info::Reply => crate::reply::show(app, ui, t),
     }
 }
@@ -287,7 +295,7 @@ fn close(app: &mut ModelApp, card: &Info) {
         Info::Seed(_) => app.selected_seed = None,
         Info::Mesh => app.selected_mesh = false,
         // Errors show in the status bar.
-        Info::ExternalSeries => {
+        Info::ExternalResults => {
             let _ = app.run("results.external.contour", json!({"show": false}));
         }
         Info::Results(_) => {

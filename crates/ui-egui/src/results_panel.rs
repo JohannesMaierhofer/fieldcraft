@@ -42,6 +42,17 @@ pub fn show(app: &mut ModelApp, ui: &mut egui::Ui, rect: Rect, t: &Tokens) {
         let title = format!("{}   {} … {}", field.title, number(field.range[0]), number(field.range[1]));
         let font = FontId::proportional(solidcraft_theme::Tokens::get().font_heading);
         painter.text(area.left_top() + vec2(10., 10.), Align2::LEFT_TOP, title, font, t.overlay_text);
+        let scale = app.session.external_deformation_scale();
+        if scale > 0.0 {
+            let text = format!("Deformation × {}", number(scale));
+            painter.text(
+                area.left_top() + vec2(10.0, 32.0),
+                Align2::LEFT_TOP,
+                text,
+                FontId::proportional(solidcraft_theme::Tokens::get().font_heading),
+                t.overlay_text,
+            );
+        }
         return;
     }
     let Some(plot) = app.plot() else { return };
@@ -399,12 +410,42 @@ pub fn controls(app: &mut ModelApp, plot: &Plot, ui: &mut egui::Ui, t: &Tokens) 
 }
 
 pub fn external_controls(app: &mut ModelApp, ui: &mut egui::Ui) {
+    if app.session.external_contour().is_some_and(|field| field.has_displacements()) {
+        let mut scale = app.session.external_deformation_scale();
+        let mut enabled = scale > 0.0;
+        let mut changed = false;
+        kit::scope(ui, |ui| {
+            kit::row(ui, "Deformed", |ui| {
+                let toggle = kit::checkbox(ui, "Show", &mut enabled).backing_on_hover_text("Move mesh nodes by the external displacement vectors");
+                app.place("external/deformed", toggle.rect);
+                if toggle.changed() {
+                    scale = if enabled { 1.0 } else { 0.0 };
+                    changed = true;
+                }
+            });
+            kit::row(ui, "Scale", |ui| {
+                let speed = scale.abs().max(MIN_DRAG_SCALE) * 0.01;
+                let field = ui
+                    .add_enabled_ui(enabled, |ui| {
+                        column_number_field(ui, &mut scale, 0.0..=fieldcraft_engine::results::MAX_DEFORMATION_SCALE, speed, "×")
+                    })
+                    .inner;
+                app.place("external/deformation-scale", field.rect);
+                changed |= field.changed();
+            });
+        });
+        if changed {
+            let _ = app.run("results.external.deformed", json!({"scale":scale}));
+        }
+    }
     let Some(series) = app.session.external_series() else { return };
-    let (mut frame, count, playing, time) = (series.frame(), series.count(), series.playing(), series.frame_time());
+    let (mut frame, count, playing) = (series.frame(), series.count(), series.playing());
+    let axis = series.axis_label().to_owned();
+    let value = with_unit(number(series.frame_value()), Some(series.axis_unit()));
     let mut command = None;
     kit::scope(ui, |ui| {
-        kit::row(ui, "Time", |ui| {
-            ui.label(format!("{} s", number(time)));
+        kit::row(ui, &axis, |ui| {
+            ui.label(value);
         });
         kit::row(ui, "Frame", |ui| {
             if kit::slider(

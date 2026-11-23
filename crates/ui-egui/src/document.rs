@@ -62,6 +62,7 @@ impl ModelApp {
             revision: _,
             // Caches keyed by the model revision or design they were built for.
             display: _,
+            external_shape,
             glyphs: _,
             plot: _,
             probe,
@@ -141,6 +142,7 @@ impl ModelApp {
             search,
         } = self;
         ui.document_replaced(tab);
+        *external_shape = None;
         *dialog = None;
         *preview = Default::default();
         *merge_preview = Default::default();

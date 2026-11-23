@@ -2636,7 +2636,14 @@ pub const IMPORT_ORPHAN: &[Field] = &[
         .help("Boundary surfaces select existing volume faces. Keep shells only for intentional surface elements that match no volume face.")
         .def("\"refuse\""),
 ];
+const WARP_SCALE: Field = range("deformation_scale", "Displacement scale", D::None, 0.0, crate::results::MAX_DEFORMATION_SCALE)
+    .help("Draw an external displacement vector in meters at this magnification. Zero shows the reference mesh. One shows the true shape.");
+pub const EXTERNAL_DEFORMED: &[Field] = &[range("scale", "Displacement scale", D::None, 0.0, crate::results::MAX_DEFORMATION_SCALE)
+    .help("Multiply the displayed nodal displacement by this value for the field or series.")
+    .def("1.0")];
+
 pub const EXTERNAL_CONTOUR: &[Field] = &[
+    WARP_SCALE,
     flag("show", "Show contour").help("Turn off to clear the external contour.").def("true"),
     path("path", "Nodal field", false).help("Choose a field from an external run on this mesh."),
     text("entry", "Catalog entry").help("Alternatively select a field by its name in the current run."),
@@ -2645,6 +2652,7 @@ pub const EXTERNAL_CONTOUR: &[Field] = &[
         .def("\"auto\""),
 ];
 pub const EXTERNAL_SERIES: &[Field] = &[
+    WARP_SCALE,
     path("path", "Time series", false).help("Choose a time series for this mesh."),
     text("entry", "Catalog entry").help("Alternatively select a time series by its name in the current run."),
     choice("component", "Vector component", &[("auto", "Scalar value or vector magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])

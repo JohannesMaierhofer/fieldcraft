@@ -748,7 +748,14 @@ pub static CATALOGUE: &[Capability] = &[
     // ---- Results ----
     ready_more("results.deformed", "Deformed", Results, "Display", "The deformed shape of a solved step, to scale", &["results.clear"]),
     ready("results.contour", "Contours", Results, "Display", "Contours of displacement and stress, with a legend"),
-    ready("results.external.contour", "External Field", Results, "Display", "Show a scalar or vector field on the original mesh"),
+    ready_more(
+        "results.external.contour",
+        "External Field",
+        Results,
+        "Display",
+        "Show external nodal fields and magnify displacement on the mesh",
+        &["results.external.deformed"],
+    ),
     ready_more(
         "results.external.series",
         "External Time Series",

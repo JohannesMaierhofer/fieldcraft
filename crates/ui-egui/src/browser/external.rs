@@ -45,7 +45,7 @@ struct Group<'a> {
 fn groups(c: &ExternalCatalog) -> [Group<'_>; 7] {
     [
         Group { key: "external/fields", label: "Fields", entries: Entries::Outputs(&c.fields, "results.external.contour") },
-        Group { key: "external/series", label: "Time Series", entries: Entries::Outputs(&c.series, "results.external.series") },
+        Group { key: "external/series", label: "Field Series", entries: Entries::Outputs(&c.series, "results.external.series") },
         Group { key: "external/integrals", label: "Integrals", entries: Entries::Integrals(&c.integrals) },
         Group { key: "external/materials", label: "Material Regions", entries: Entries::Names(&c.materials) },
         Group { key: "external/boundaries", label: "Boundaries", entries: Entries::Names(&c.boundaries) },

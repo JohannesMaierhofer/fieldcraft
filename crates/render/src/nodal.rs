@@ -1,6 +1,6 @@
 //! Contour a solver-independent real nodal field on the exact original mesh.
 use crate::contour::{Bands, banded, bands_color};
-use crate::{DisplayMesh, Rgb, Scene};
+use crate::{DisplayMesh, Rgb, Scene, Vec3};
 use serde::Deserialize;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +20,7 @@ pub struct NodalContour {
     pub min: (u32, f64),
     pub max: (u32, f64),
     labels: Vec<u32>,
+    displacements_m: Option<Vec<[f64; 3]>>,
     values: Vec<f64>,
     pub range: [f64; 2],
 }
@@ -65,6 +66,7 @@ impl FieldFile {
         if self.mesh_sha256 != mesh_sha256 {
             return Err("field belongs to a different mesh (mesh.bin SHA-256 mismatch)");
         }
+        let displacements_m = (self.components == 3 && self.unit == "m").then(|| self.values.as_chunks::<3>().0.to_vec());
         let mut title = self.name;
         let values = if self.components == 1 {
             if component.is_some() {
@@ -93,11 +95,28 @@ impl FieldFile {
         if !(max.1 - min.1).is_finite() {
             return Err("field range cannot be represented");
         }
-        Ok(NodalContour { title, min, max, labels: self.node_ids, values, range: [min.1, max.1] })
+        Ok(NodalContour { title, min, max, labels: self.node_ids, displacements_m, values, range: [min.1, max.1] })
     }
 }
 
 impl NodalContour {
+    /// Only three-component displacements in SI meters can change the displayed shape.
+    pub fn has_displacements(&self) -> bool {
+        self.displacements_m.is_some()
+    }
+
+    /// Align a displacement with its original node label, independently of the contour component.
+    pub fn displacement(&self, label: u32) -> Option<Vec3> {
+        let vectors = self.displacements_m.as_ref()?;
+        let index = self.labels.binary_search(&label).ok()?;
+        vectors.get(index).copied().map(Vec3::from)
+    }
+
+    /// The reference display and external displacements both use SI meters.
+    pub fn displaced(&self, reference: &DisplayMesh, scale: f64) -> DisplayMesh {
+        reference.displaced(|label| self.displacement(label).map(|u| u * scale))
+    }
+
     /// Reuse native band clipping and palettes in both the viewport and offscreen renders.
     pub fn draw(&self, display: &DisplayMesh, scene: &mut Scene, stops: &[Rgb], over: Rgb, none: Rgb) {
         let bands = Bands::new(self.range[0], self.range[1], 12);
@@ -146,6 +165,25 @@ mod tests {
         magnitude.draw(&dm, &mut scene, &[Rgb(0, 0, 0), Rgb(255, 255, 255)], Rgb(255, 0, 0), Rgb(0, 0, 0));
         assert!(scene.tris.len() > dm.tris.len());
     }
+    #[test]
+    fn true_and_magnified_shapes_use_all_components_and_original_labels() {
+        let model = mesh();
+        let base = DisplayMesh::from_model(&model);
+        let mut file = data(&model);
+        file.unit = "m".into();
+        let field = file.prepare(model.nodes().keys(), "the mesh", Some("z")).unwrap();
+        assert_eq!(field.displacement(2), Some(Vec3::new(3., 4., 0.)));
+        for scale in [0.0, 0.25, 1.0, 2.5] {
+            let shown = field.displaced(&base, scale);
+            assert_eq!(shown.nodes[0].p, Vec3::new(3. * scale, 4. * scale, 0.));
+            assert_eq!(shown.nodes[1].p, base.nodes[1].p);
+            assert!(shown.tris.iter().any(|tri| tri.p.contains(&shown.nodes[0].p)));
+            assert!(shown.edges.iter().any(|edge| edge.p.contains(&shown.nodes[0].p)));
+        }
+        assert_eq!(base.nodes[0].p, Vec3::ZERO);
+        assert!(!data(&model).prepare(model.nodes().keys(), "the mesh", None).unwrap().has_displacements());
+    }
+
     #[test]
     fn rejects_unrelated_mesh_and_invalid_data() {
         let s = mesh();

@@ -318,6 +318,7 @@ pub struct Session {
     pub model: Model,
     /// Optional verified nodal field from a separately run calculation.
     pub(crate) external_field: Option<Arc<external::ExternalField>>,
+    pub(crate) external_deformation_scale: f64,
     pub(crate) field_series: Option<external_series::Series>,
     result_catalog: Option<Arc<external_catalog::ExternalCatalog>>,
     selected_result: Option<external_catalog::CatalogField>,
