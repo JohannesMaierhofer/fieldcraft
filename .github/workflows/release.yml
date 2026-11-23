@@ -52,6 +52,7 @@
 # `release-assets` artifact without creating a release. `-f draft=true` on `main` retries
 # the draft.
 name: Release
+# The upstream release train owns FieldCraft version tags. Fork packages use the NGSolve installer workflows.
 
 on:
   push:
@@ -92,7 +93,7 @@ jobs:
   # `ubuntu-24.04` (the verify-oracle matrix too).
   version:
     # A `workflow_run` run is a nightly only when CI's run was the scheduled one.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'schedule'
+    if: github.repository == 'tangency-labs/fieldcraft' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'schedule')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       # The environment of every job that reads a secret (see the header): `release` on `main` and
@@ -158,7 +159,7 @@ jobs:
   verify-ci:
     name: Verify (cargo xtask ci)
     # A nightly reuses CI's nightly run of the same commit (packaging/nightly.sh).
-    if: github.event_name != 'workflow_run'
+    if: github.repository == 'tangency-labs/fieldcraft' && github.event_name != 'workflow_run'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
@@ -185,7 +186,7 @@ jobs:
   verify-heavy:
     name: Verify (cargo xtask test --heavy)
     # A nightly reuses CI's nightly run of the same commit (packaging/nightly.sh).
-    if: github.event_name != 'workflow_run'
+    if: github.repository == 'tangency-labs/fieldcraft' && github.event_name != 'workflow_run'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
@@ -205,7 +206,7 @@ jobs:
   verify-oracle:
     name: Verify (cargo xtask oracle, ${{ matrix.os }})
     # A nightly reuses CI's nightly run of the same commit (packaging/nightly.sh).
-    if: github.event_name != 'workflow_run'
+    if: github.repository == 'tangency-labs/fieldcraft' && github.event_name != 'workflow_run'
     strategy:
       fail-fast: false
       matrix:
@@ -464,7 +465,7 @@ jobs:
     # nightly, whose verify jobs reuse CI's nightly run and are skipped (packaging/nightly.sh).
     needs: [version, verify-ci, verify-heavy, verify-oracle, macos, linux, windows]
     if: >-
-      !cancelled() && needs.version.outputs.build == 'true' &&
+      github.repository == 'tangency-labs/fieldcraft' && !cancelled() && needs.version.outputs.build == 'true' &&
       needs.macos.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success' &&
       (needs.version.outputs.nightly == 'true' ||
         (needs.verify-ci.result == 'success' && needs.verify-heavy.result == 'success' && needs.verify-oracle.result == 'success'))

@@ -40,6 +40,7 @@ env:
 
 jobs:
   build:
+    if: github.repository == 'tangency-labs/fieldcraft'
     # POSTHOG_KEY lives in the `release` environment (main only, docs/releasing.md). The deploy job
     # already uses github-pages and a job has one environment, so the build job reads the key: on
     # main it runs in `release`, elsewhere in no environment and with an empty key.
@@ -106,7 +107,7 @@ jobs:
   # makes site-flatpak/flatpak/ for `deploy` to add.
   flatpak:
     name: Flatpak repository
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'tangency-labs/fieldcraft' && github.ref == 'refs/heads/main'
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30

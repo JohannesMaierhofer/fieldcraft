@@ -1,228 +1,31 @@
-<p align="center">
-  <img src="assets/app-icon/icon.png" width="96" height="96" alt="FieldCraft" />
-</p>
+# FieldCraft with NGSolve
 
-<h1 align="center">FieldCraft</h1>
+Prepare geometry, name the material volumes and boundary faces, and mesh the model in FieldCraft. Choose a Python script to solve on that mesh with NGSolve. Open the resulting scalar fields, vector components, time series and integral values in the same FieldCraft application.
 
-<p align="center">
-  <strong>An open-source, clean-room CAE application in pure Rust.</strong><br />
-  From a parametric SolidCraft part to a verified finite element analysis, with tetrahedral and
-  hexahedral meshing, its own implicit, explicit, thermal and lattice Boltzmann solvers, and
-  decks for Abaqus, Nastran and LS-DYNA. The desktop app, the command line and AI agents (over
-  MCP) drive the same commands.
-</p>
+This is Johannes Maierhofer’s integration fork of FieldCraft, the clean-room Rust CAE application developed by Tangency Labs and FieldCraft contributors. The external Python bridge passes the mesh to a separate NGSolve process. You can use the packaged private interpreter or choose an existing NGSolve installation. [Upstream FieldCraft](https://github.com/tangency-labs/fieldcraft) · [Python bridge and examples](https://github.com/JohannesMaierhofer/fieldcraft-ngsolve) · [Upstream discussion on user-defined PDEs and magnetic forces](https://github.com/tangency-labs/fieldcraft/issues/963)
 
-<div align="center">
+## Download and run a first case
 
-[![Download for Windows][badge-windows]][windows-zip]
-[![Download for macOS][badge-macos]][macos-dmg]
-[![Download for Linux][badge-linux]][linux-appimage]
-[![Try it in your browser][badge-web]][web-app]
+**[Download fork installers and checksums from Releases](https://github.com/JohannesMaierhofer/fieldcraft/releases).** Choose the installer for your processor. Fork tags use `ngsolve-v<upstream version>-r<fork revision>`. For example, `ngsolve-v0.8.1-r1` denotes the first fork release based on FieldCraft 0.8.1. The release notes identify the source revision and assets for each build.
 
-</div>
-
-<p align="center">
-  <a href="https://tangency-labs.github.io/fieldcraft/">Documentation</a> ·
-  <a href="https://tangency-labs.github.io/fieldcraft/app/">Try it in the browser</a> ·
-  <a href="https://github.com/tangency-labs/fieldcraft/releases/latest">Releases</a> ·
-  <a href="ROADMAP.md">Roadmap</a> ·
-  <a href="https://ko-fi.com/jyviko/tiers">Support</a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/tangency-labs/fieldcraft/actions/workflows/ci.yml?query=branch%3Adevelop"><img src="https://github.com/tangency-labs/fieldcraft/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
-  <a href="https://github.com/tangency-labs/fieldcraft/releases/latest"><img src="https://img.shields.io/github/v/release/tangency-labs/fieldcraft?label=release" alt="Latest release" /></a>
-  <a href="https://github.com/tangency-labs/fieldcraft/releases"><img src="https://img.shields.io/github/downloads/tangency-labs/fieldcraft/total?label=downloads" alt="Downloads" /></a>
-  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue" alt="Licence" /></a>
-  <a href="https://github.com/tangency-labs/fieldcraft/stargazers"><img src="https://img.shields.io/github/stars/tangency-labs/fieldcraft?style=flat" alt="Stars" /></a>
-</p>
-
-**Status:** early but working end to end — open a part, mesh it, define the analysis, solve,
-see the results — with a nonlinear implicit solver (large deformation, plasticity, rubber) now
-in place. Hex meshing is the centre of gravity. Next: buckling and arc-length, contact, then
-the wider material and multiphysics library. See [ROADMAP.md](ROADMAP.md).
-**Want to help?** Pick an issue labelled
-[good first issue](https://github.com/tangency-labs/fieldcraft/labels/good%20first%20issue) or
-[help wanted](https://github.com/tangency-labs/fieldcraft/labels/help%20wanted) and read
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
-![Claude analyses an I-beam cantilever in FieldCraft over MCP: it opens the part, hex meshes it, sets steel, the clamp and a 1 kN tip load, solves, shows von Mises stress and the deformed shape, and checks the tip deflection against beam theory](docs/media/claude-mcp.gif)
-
-*Claude driving FieldCraft through its [MCP server](docs/mcp.md): one prompt, and it opens the part, meshes it, defines and solves the analysis, then checks the tip deflection against beam theory. Real session, waits shortened. [Full video](docs/media/claude-mcp.mp4).*
-
-![An AI agent analyses an I-beam cantilever in FieldCraft over MCP: open, hex mesh, steel, clamp and tip load, solve, von Mises contours, the deformed shape and an orbit round it](docs/media/ibeam-analysis.gif)
-
-An AI agent drives FieldCraft over [MCP](docs/mcp.md), each stage captioned with the tool it
-calls: it opens an I-beam, hex meshes it, defines the material, the clamp and a 1000 N tip load,
-solves, and shows the von Mises stress and the deformed shape (tip deflection 0.176 mm; beam
-theory with shear 0.177 mm).
-[MP4](docs/media/ibeam-analysis.mp4) · regenerated by [tools/demo-video](tools/demo-video/README.md).
-
-## Download
-
-- **macOS:** [fieldcraft-0.8.1-macos-aarch64.dmg][macos-dmg]: open it and drag FieldCraft into Applications (Apple silicon).
-- **Windows:** [fieldcraft-0.8.1-windows-x64.zip][windows-zip]: unzip and run `fieldcraft.exe`.
-- **Linux:** the [AppImage][linux-appimage] (allow it to run as a program), the [.tar.gz][linux-tar], the [.deb][linux-deb] or the [.rpm][linux-rpm].
-- **Browser:** [try it at tangency-labs.github.io/fieldcraft/app](https://tangency-labs.github.io/fieldcraft/app/), no install.
-- **Nightly:** the [nightly pre-releases](https://github.com/tangency-labs/fieldcraft/releases?q=nightly&expanded=true) build `develop` each night it has moved and passed CI ([docs/updates.md](docs/updates.md#nightly-builds)).
-- **Command line:** `fieldcraft-cli` ships in every package; AI agents connect to it over MCP
-  ([docs/mcp.md](docs/mcp.md)).
-
-Every release lists its checksums in `SHA256SUMS.txt`. Building from source is in
-[CONTRIBUTING.md](CONTRIBUTING.md#get-it-running-about-10-minutes-on-a-fast-machine).
-
-## Hex meshing a part that does not sweep
-
-A filleted L-bracket with a hole through each leg cannot be swept in one piece. Split into 30
-cells in SolidCraft, FieldCraft meshes it all-hex as one conforming mesh — O-grids round the holes,
-graded through the fillet — and its hex20 tip deflection matches a fine tet10 solution to 0.1 %.
-The same part also meshes all-hex automatically with the octree mesher (`mesh.hex.octree`).
-
-| Cells | Conforming hex mesh | Von Mises (clamp and load drawn) |
+| Tested system | Installer | FieldCraft and NGSolve |
 |---|---|---|
-| ![The bracket split into 30 coloured cells](docs/media/bracket-partition.png) | ![The all-hex mesh with O-grids round the holes](docs/media/bracket-hex.png) | ![Von Mises stress peaking at the hole, with the clamp cones and load arrows](docs/media/bracket-stress.png) |
+| Intel macOS | `.pkg` | Both run natively on x86_64 |
+| Apple silicon macOS | `.pkg` | Both run natively on arm64 |
+| Windows x64 | `.exe` | Both run natively on x64 |
+| Windows 11 on Arm | ARM64 `.exe` | Native ARM64 FieldCraft and CLI, x64 Python and NGSolve through Windows emulation |
+| Ubuntu 22.04 x86_64 | `.deb` | Both run natively on x86_64 |
 
-## What it does today
+The macOS installer downloads the pinned solver runtime on first installation. The Windows and Linux packages include it. The macOS application has an ad-hoc signature, and the package is unsigned and unnotarized. Check the download’s SHA-256 against the release checksum before opening it. Use `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux or `Get-FileHash -Algorithm SHA256 <file>` in PowerShell.
 
-- **Geometry in:** Open a SolidCraft design, STEP or IGES file from File → Open or drop it on
-  the viewport. CAD bodies keep their placement and faces for meshing and named sets. FieldCraft
-  also reads face-tagged 3MF meshes and checks surfaces for welding, manifoldness, orientation
-  and self-intersection.
-- **Meshing:** constrained Delaunay tetrahedra (tet4, tet10) with exact predicates and a
-  certified validity gate; Delaunay refinement, smoothing and sliver removal; structured hex by
-  sweeping, revolving and mapping (hex8, hex20), and conforming multi-block hex across a part
-  split into cells (`mesh.hex.blocks`); unstructured octree all-hex for any part
-  (`mesh.hex.octree`); 2D quad and tri meshes; quality metrics per element and set.
-- **Elements:** solids (tet4, tet10, wedge6, hex8 with incompatible modes, hex20 full and
-  reduced, hybrid u–p for near-incompressible materials), plane stress, plane strain and
-  axisymmetric, trusses, Timoshenko beams, MITC3/MITC4 shells, springs, dashpots and point masses.
-- **Model:** sets bound to geometry names, so they survive remeshing; isotropic and orthotropic
-  elasticity, J2 plasticity (isotropic and kinematic hardening, Johnson–Cook), Johnson–Cook
-  damage, neo-Hookean, Mooney–Rivlin and Yeoh hyperelasticity, thermal properties; fixed, displacement,
-  symmetry and temperature conditions; forces, moments, pressure, gravity, centrifugal and heat
-  loads; reference points with kinematic and distributing couplings; undo, redo and a
-  text-diffable `.fieldcraft` file.
-- **Solvers:** linear static and frequency (supernodal Cholesky, block Lanczos); nonlinear static
-  by Newton–Raphson with automatic increments — large deformation (total Lagrangian) on every
-  solid element, follower pressure, finite- and small-strain plasticity sharing one return map
-  with the explicit solver, rubber and thermal strain, with measured quadratic convergence; steady and
-  transient heat transfer and coupled thermal stress; explicit dynamics with plasticity, damage,
-  erosion and rigid walls; D3Q19 lattice Boltzmann flow with forces on the part's faces. Results
-  never depend on the thread count.
-- **Decks:** Abaqus, Nastran and LS-DYNA writers, each refusing by name what it cannot express.
-- **Results:** contours of stress, strain and displacement with a legend, deformed shapes, mode
-  shapes, explicit and nonlinear frames, probes and reaction sums; supports, loads, reference
-  points and couplings drawn in the viewport.
-- **Verification:** every capability is checked against closed forms and published benchmarks
-  (NAFEMS, MacNeal–Harder, Scordelis–Lo, the elastica, Hill's plastic cylinder, Rivlin's tube) in [`tests/oracle`](tests/oracle), with results frozen
-  so they cannot drift: 170 of 176 quantities pass in 50 cases, the 6 others documented known
-  failures ([docs/oracle.md](docs/oracle.md)).
-- **Driving it:** a desktop app in the Craft family's layout, a CLI, a JSON control channel and an
-  MCP server; every capability is a command ([docs/features.md](docs/features.md)).
+The bundled capacitor case starts from a 1 V potential difference. Mesh its slab recipe, run the case, then inspect the potential, electric field and stored energy. The transient magnetic diffusion example adds a time slider and playback on a fixed mesh. On all five targets, the installer tests for revision `9def8cf` solved both examples, verified the capacitor’s energy against 4.4270939064 × 10⁻¹⁴ J and exercised the native playback controls. [macOS first-case instructions](packaging/macos/ngsolve/README.md) · [Windows and Linux first-case instructions](packaging/ngsolve/README.md) · [macOS verification](https://github.com/JohannesMaierhofer/fieldcraft/actions/runs/45060336388) · [Windows and Linux verification](https://github.com/JohannesMaierhofer/fieldcraft/actions/runs/45060336394)
 
-![The FieldCraft window: a clamped cantilever with its supports, pressure, gravity and a coupled reference point drawn in the viewport](docs/media/setup-symbols.png)
+## Working with your own model
 
-## Examples
+Open a SolidCraft design or a STEP/IGES solid, assign names to the regions and faces your equations use, and generate the mesh in FieldCraft. In the case file, specify the saved model, those names and your script. The script can return scalar fields, three-component vector fields, timestamped nodal frames and named scalar or vector integrals. FieldCraft checks the mesh fingerprint and original node labels before displaying nodal results. For magnetostatics, the script can report flux density in tesla, force in newtons and torque in newton metres about a stated origin. [Native field format](docs/recipes/external-field.md) · [Bridge and case format](https://github.com/JohannesMaierhofer/fieldcraft-ngsolve)
 
-Ready-to-solve samples: open one from **File ▸ Samples** (or the start screen), or start the app
-with `fieldcraft --sample NAME`, and press **Solve**. Each opens and solves within half a minute and is checked
-against a closed form or a reference solution ([docs/examples.md](docs/examples.md)).
+## Upstream collaboration and credits
 
-<table>
-<tr>
-<td width="33%" valign="top"><img src="docs/media/examples/drop-test.png" alt="Drop test" width="100%"><br><b>Drop test</b> (<code>drop-test</code>): an aluminium bracket dropped 2 m onto a tilted floor; explicit dynamics, the strike's stress waves</td>
-<td width="33%" valign="top"><img src="docs/media/examples/rubber-seal.png" alt="Rubber seal" width="100%"><br><b>Rubber seal</b> (<code>rubber-seal</code>): a Mooney–Rivlin gasket ring squeezed 25 %; nonlinear static, large strain</td>
-<td width="33%" valign="top"><img src="docs/media/examples/heated-bracket.png" alt="Heated bracket" width="100%"><br><b>Heated bracket</b> (<code>heated-bracket</code>): a clamped steel bracket heated at one end; steady heat and thermal stress</td>
-</tr>
-<tr>
-<td width="33%" valign="top"><img src="docs/media/examples/bracket-hex.png" alt="Hex-meshed bracket" width="100%"><br><b>Hex-meshed bracket</b> (<code>bracket-hex</code>): the bracket split into 30 cells, meshed all-hex (hex20), von Mises</td>
-<td width="33%" valign="top"><img src="docs/media/examples/crank-arm.png" alt="Bicycle crank arm" width="100%"><br><b>Bicycle crank arm</b> (<code>crank-arm</code>): an aluminium crank meshed structured all-hex (hex20) from a partitioned half and its mirror image, a rider's weight on the pedal; root bending within 0.3 % of M/Z</td>
-<td width="33%" valign="top"><i>No picture yet: the viewport does not draw flow results (M12).</i><br><b>Flow past a bracket</b> (<code>flow-past</code>): air past an L-bracket on the floor; lattice Boltzmann flow, the drag and the force on each face</td>
-</tr>
-</table>
+The fork builds on the FieldCraft 0.8.1 release and subsequent upstream development through `a6d29ed`. The Intel build and solver-independent result readers are separate upstream review candidates. [Upstream base](https://github.com/tangency-labs/fieldcraft/commit/a6d29ed54b7587ed7e7a566a4b9a61e7104cd880) · [Intel macOS builds](https://github.com/JohannesMaierhofer/fieldcraft/tree/ci/intel-macos-artifacts) · [Native fields and integrals](https://github.com/JohannesMaierhofer/fieldcraft/tree/codex/external-solver-results) · [Native time series](https://github.com/JohannesMaierhofer/fieldcraft/tree/codex/external-field-time-series) · [Upstream contributing guide](https://github.com/tangency-labs/fieldcraft/blob/develop/CONTRIBUTING.md)
 
-## Build
-
-```sh
-cargo xtask ci                                  # fmt, assets, layers, clippy, tests, wasm
-cargo xtask test --heavy                        # the heavy (ignored) tests and the doc tests
-cargo run -p fieldcraft-cli -- commands         # every command and its parameters
-cargo run -p fieldcraft-cli -- run script.json  # run a command script
-cargo run -p fieldcraft-cli -- snapshot script.json --out shot.png  # draw it to a PNG, no window
-cargo run -p fieldcraft-cli -- mcp              # MCP server on stdio for AI agents (docs/mcp.md)
-```
-
-Rust 1.99.1 through rustup (`rust-toolchain.toml`, with the `wasm32-unknown-unknown` target `cargo xtask ci` needs); 1.95 or later also builds.
-
-With Nix (`flake.nix`, Linux and macOS):
-
-```sh
-nix run github:tangency-labs/fieldcraft                         # the desktop app (package fieldcraft)
-nix run github:tangency-labs/fieldcraft#fieldcraft-cli -- mcp   # the CLI (package fieldcraft-cli)
-nix develop          # runtime libraries for `cargo run` (window, GPU, file dialogs); your own toolchain
-nix develop .#rust   # the same with nixpkgs' Rust, building into target/nix
-```
-
-On Linux the GPU drivers come from the system: `hardware.graphics.enable` on NixOS, nixGL elsewhere.
-
-## Documentation
-
-The documentation site is at
-[tangency-labs.github.io/fieldcraft](https://tangency-labs.github.io/fieldcraft/), built from
-`docs/` with each release (`cargo xtask book`). The main pages:
-
-- [Examples](docs/examples.md): the ready-to-solve samples and their checks
-- [Architecture](docs/architecture.md): crates, layers and the meshing pipeline
-- [Element library](docs/manual/structural/elements.md), [materials](docs/manual/structural/materials.md), the [cited material library](docs/manual/structural/material-library.md) and [verification and validation](docs/verification.md)
-- [Capability checklist](docs/parity.md) and [roadmap](ROADMAP.md)
-- [Libraries and licences](docs/adr/0001-libraries.md)
-- [AI agents (MCP)](docs/mcp.md): `claude mcp add fieldcraft -- /path/to/fieldcraft-cli mcp`
-- [Control protocol](docs/control-protocol.md): driving the desktop app
-- [Releasing](docs/releasing.md): how a release is built, verified and published
-- [Contributing](CONTRIBUTING.md) and [agent instructions](AGENTS.md)
-
-## Privacy
-
-FieldCraft sends nothing until you agree. The first start asks once whether to share anonymous
-usage (which tools you use, nothing from your models); Help › Settings… changes it, and
-`FIELDCRAFT_TELEMETRY=0` turns it off. File names, paths, geometry, model contents, parameter
-values and messages are never sent: [docs/privacy.md](docs/privacy.md) lists every event and
-property. Crash reports and the log stay on your computer; Help › Report a Bug opens a GitHub issue
-you review and submit yourself, with your session or model attached only if you tick them
-([docs/crash-reports.md](docs/crash-reports.md)).
-
-## Sponsors
-
-[![CI powered by Blacksmith](docs/sponsors/blacksmith-ci-powered.png)](https://www.blacksmith.sh)
-
-FieldCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which sponsors its CI minutes.
-
-You can support FieldCraft's development with a [Ko-fi membership](https://ko-fi.com/jyviko/tiers) or a one-time tip.
-
-## Disclaimer
-
-The files in this repository are provided as is, without warranty, liability or indemnity, and
-Tangency Labs and the contributors accept no responsibility for any harmful or unlawful use of
-them: read [DISCLAIMER.md](DISCLAIMER.md).
-
-## License
-
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Notices
-are in [NOTICE](NOTICE); third-party licences in
-THIRD-PARTY-LICENSES.txt, which every release package carries (`cargo xtask licences` writes it).
-
-FieldCraft is an independent project, not affiliated with, sponsored or endorsed by Dassault
-Systèmes, MSC Software, Siemens or Ansys. Abaqus, Nastran, MSC Nastran, Simcenter Nastran and
-LS-DYNA are trademarks of their owners and are named only to describe file compatibility.
-
-[badge-windows]: https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yIDJoOS41djkuNUgyek0xMi41IDJIMjJ2OS41aC05LjV6TTIgMTIuNWg5LjVWMjJIMnpNMTIuNSAxMi41SDIyVjIyaC05LjV6Ii8%2BPC9zdmc%2B
-[badge-macos]: https://img.shields.io/badge/macOS-Download-333333?style=for-the-badge&logo=apple&logoColor=white
-[badge-linux]: https://img.shields.io/badge/Linux-AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white
-[badge-web]: https://img.shields.io/badge/Web-Try_in_browser-2EA44F?style=for-the-badge&logo=webassembly&logoColor=white
-[windows-zip]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-windows-x64.zip
-[macos-dmg]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-macos-aarch64.dmg
-[linux-appimage]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-linux-x86_64.AppImage
-[linux-tar]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1-linux-x86_64.tar.gz
-[linux-deb]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft_0.8.1_amd64.deb
-[linux-rpm]: https://github.com/tangency-labs/fieldcraft/releases/download/v0.8.1/fieldcraft-0.8.1.x86_64.rpm
-[web-app]: https://tangency-labs.github.io/fieldcraft/app/
+FieldCraft code is available under MIT or Apache-2.0. Third-party code, fonts, artwork and runtime distributions retain their respective licences. The upstream attribution register identifies the contributors and sources. ADR 0001 records FieldCraft’s permission for the three SolidCraft interface crates. The application packages include the FieldCraft notices, and the private Python environment retains the notices supplied with its distributions. [MIT](LICENSE-MIT) · [Apache-2.0](LICENSE-APACHE) · [Project notice](NOTICE) · [Asset and code attribution](ATTRIBUTION.md) · [SolidCraft interface licence record](docs/adr/0001-libraries.md) · [Runtime notices](packaging/macos/ngsolve/NOTICE.txt)

@@ -15,7 +15,7 @@ permissions:
 jobs:
   pages:
     name: Deploy Pages with the new release
-    if: ${{ !github.event.release.prerelease }}
+    if: github.repository == 'tangency-labs/fieldcraft' && !github.event.release.prerelease
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
