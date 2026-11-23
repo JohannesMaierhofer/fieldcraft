@@ -142,6 +142,9 @@ In progress, in this order of landing:
 8. M12 derived exchanger results (#837): arbitrary face sets, time-window averages,
    effectiveness/LMTD and the complete energy balance.
 
+External solver integration (#963): the model browser now lists fields, time series, integrals,
+material regions, boundaries, interfaces and loads from a mesh-checked solver manifest.
+
 ## Gap review (2026-10-14)
 
 What exists and what is missing, by area; each gap is in a milestone above.

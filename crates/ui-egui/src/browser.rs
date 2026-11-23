@@ -22,6 +22,8 @@
 //! them; the setup marks' column at their left, the motion arrow on a moving boundary condition's
 //! icon and the ghost rows are FieldCraft's own (the kit's rows have no workflow stages).
 
+mod external;
+
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use fieldcraft_engine::progress::{Stage, StageState, Status};
 use fieldcraft_engine::schema::Collection;
@@ -43,9 +45,10 @@ const MARK_W: f32 = 14.0;
 /// The browser's top-level nodes below the model, in order, with the setup stages each shows
 /// (`ui.inspect`'s `browser`). Seeds and partitions ([`Stage::Prepare`]) are optional and sit
 /// under Geometry and Mesh without a mark.
-pub const NODES: [(&str, &[Stage]); 10] = [
+pub const NODES: [(&str, &[Stage]); 11] = [
     ("geometry", &[Stage::Geometry]),
     ("mesh", &[Stage::Mesh]),
+    ("external", &[]),
     ("sets", &[Stage::Sets]),
     ("materials", &[Stage::Material]),
     ("sections", &[Stage::Section]),
@@ -170,6 +173,9 @@ fn holds(app: &ModelApp, node: &str) -> bool {
 /// stages that the model needs (`reached` from [`reached`]); Interactions and Fluid Domains,
 /// which no model needs, once a step exists.
 fn shown(app: &ModelApp, reached: &[StageState], node: &str) -> bool {
+    if node == "external" {
+        return app.session.external_catalog().is_some();
+    }
     let own = node_stages(node);
     holds(app, node)
         || if own.is_empty() {
@@ -224,13 +230,19 @@ pub fn describe(app: &mut ModelApp) -> Value {
                     .into_iter()
                     .map(|s| json!({"stage": s.stage, "label": ghost_label(s.stage), "command": s.command, "status": s.status}))
                     .collect();
-                json!({
+                let mut description = json!({
                     "node": node,
                     "shown": shown,
                     "state": state.as_ref().map(|(st, _)| st),
                     "tip": state.map(|(_, tip)| tip),
                     "add": add,
-                })
+                });
+                if *node == "external"
+                    && let Some(c) = app.session.external_catalog()
+                {
+                    description["groups"] = external::describe(c);
+                }
+                description
             })
             .collect(),
     )
@@ -987,6 +999,7 @@ enum Act {
     /// Select the item a right click opened its menu on (nothing for an item that cannot be).
     Focus(Target),
     ShowResult(String),
+    External(&'static str, String),
     /// A ghost row's command.
     Start(&'static str),
     /// An item menu's entry, or an item's eye.
@@ -1127,6 +1140,9 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
                 Target::Body(_) | Target::Surface(_) | Target::View(_) | Target::Render(_) | Target::RigidWall { .. } => app.select_definition(None),
             },
             Act::Menu(target, action) => menu::apply(app, target, action),
+            Act::External(command, name) => {
+                let _ = app.run(command, json!({"entry": name}));
+            }
             Act::ShowResult(step) => {
                 // Errors show in the status bar.
                 let _ = app.run("results.deformed", json!({"step": step}));
@@ -1530,6 +1546,7 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
         }
         ghost_rows(app, ui, &stages, "mesh", acts);
     }
+    external::draw(app, ui, acts);
     // Definitions.
     for (key, label, kinds) in GROUPS {
         if !shown(app, &stages, key) {
@@ -1797,7 +1814,7 @@ pub(crate) mod tests {
         for (node, st, add) in marks(&mut app) {
             match node {
                 "results" => assert_eq!((st, add), (Some(Next), vec!["solve.run"])),
-                "interactions" | "fluids" => assert_eq!(st, None),
+                "external" | "interactions" | "fluids" => assert_eq!(st, None),
                 _ => assert_eq!((node, st, add), (node, Some(Done), vec![])),
             }
         }
@@ -1805,7 +1822,10 @@ pub(crate) mod tests {
         app.run("solve.run", json!({})).unwrap();
         assert!(marks(&mut app).iter().all(|(_, st, add)| matches!(st, None | Some(Done)) && add.is_empty()), "{:?}", marks(&mut app));
         let v = describe(&mut app);
-        assert_eq!(v[2], json!({"node": "sets", "shown": true, "state": "done", "tip": "Done", "add": []}));
+        assert_eq!(
+            v.as_array().unwrap().iter().find(|n| n["node"] == "sets").unwrap(),
+            &json!({"node": "sets", "shown": true, "state": "done", "tip": "Done", "add": []})
+        );
     }
 
     /// The nodes `ui.inspect` reports as drawn.
@@ -1912,7 +1932,7 @@ pub(crate) mod tests {
 
         let mut app = ModelApp::new(Session::default());
         app.run_script(&fieldcraft_engine::sample::cantilever()).unwrap();
-        assert_eq!(shown_nodes(&mut app), NODES.map(|(n, _)| n));
+        assert_eq!(shown_nodes(&mut app), NODES.iter().map(|(n, _)| *n).filter(|n| *n != "external").collect::<Vec<_>>());
         assert_eq!(drawn_ghosts(&mut app), ["browser/add/solve"]);
         inspect_matches_frame(&mut app);
     }
