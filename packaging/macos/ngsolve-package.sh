@@ -39,7 +39,6 @@ work=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/fc-ngsolve.XXXXXXXX")
 cleanup() { /bin/rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work/scripts" "$work/apps"
-/usr/bin/install -m 755 "$here/ngsolve/Run NGSolve Case.command" "$work/apps/Run NGSolve Case.command"
 cp "$here/ngsolve/$arch.lock" "$work/scripts/runtime.lock"
 cp "$here/ngsolve/postinstall" "$here/ngsolve/fieldcraft-ngsolve" "$work/scripts/"
 cp "$here/../ngsolve/SOLVER-NOTICES.txt" "$work/scripts/NOTICE.txt"
@@ -49,7 +48,6 @@ if [[ -n "$cache" ]]; then
     mkdir "$work/scripts/offline"
     while read -r digest url; do
         name=${url##*/}; name=${name//%2B/+}
-        if [[ "$url" == https://codeload.github.com/* ]]; then name="bridge-$name.zip"; fi
         asset="$cache/$name"
         [[ $(/usr/bin/shasum -a 256 "$asset" | /usr/bin/awk '{print $1}') == "$digest" ]] || { echo "Checksum failed: $name" >&2; exit 1; }
         cp -c "$asset" "$work/scripts/offline/$name" 2>/dev/null || cp "$asset" "$work/scripts/offline/$name"

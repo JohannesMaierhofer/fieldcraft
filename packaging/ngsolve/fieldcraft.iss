@@ -17,4 +17,3 @@ Source: "{#Stage}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs i
 
 [Icons]
 Name: "{group}\FieldCraft"; Filename: "{app}\fieldcraft.exe"
-Name: "{group}\Solver examples"; Filename: "{app}\bridge\samples"

@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$Bridge,
     [Parameter(Mandatory)][string]$Python,
     [Parameter(Mandatory)][string]$Cli,
     [Parameter(Mandatory)][string]$Gui,
@@ -14,11 +13,11 @@ $env:VECLIB_MAXIMUM_THREADS = '1'
 $env:OMP_NUM_THREADS = '1'
 $work = Join-Path $OutputDir 'magnetic-diffusion'
 New-Item -ItemType Directory -Force $work | Out-Null
-Copy-Item "$Bridge/examples/magnetic-diffusion/*" $work
+& "$PSScriptRoot/fixtures.ps1" -Directory $work -Scenario diffusion
 Push-Location $work
 try {
     & $Cli run mesh.json
-    & $Launcher case slab.case.json decay
+    & $Launcher run slab.analysis.json decay
     & $Cli run decay/view-series-1.json
     Copy-Item decay/diffusion-check.json (Join-Path $OutputDir 'magnetic-diffusion-reference.json')
     $port = 28745
@@ -27,27 +26,19 @@ try {
         $check = @'
 import hashlib, json, math, sys, time
 from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from show_run import Control, apply, read_run
-port = int(sys.argv[2])
-out = Path(sys.argv[3]).resolve()
-rpc = Control(port)
-deadline = time.monotonic() + 90
-while True:
-    try:
-        rpc('ui.inspect', {})
-        break
-    except OSError:
-        if time.monotonic() > deadline:
-            raise
-        time.sleep(.3)
-manifest, record = read_run(Path('decay'))
+from verify_ui import connect, open_run
+
+out = Path(sys.argv[2]).resolve()
+rpc = connect(int(sys.argv[1]))
+manifest, record = open_run(rpc, 'decay')
 series = json.loads((manifest.parent/record['series'][0]['file']).read_text())
 times = [frame['time'] for frame in series['frames']]
 assert len(times) == 17 and times[0] == 0 and math.isclose(times[-1], 0.00025464790891341067, rel_tol=1e-10)
 rows = [json.loads((manifest.parent/f['file']).read_text())['values'][1::3] for f in series['frames']]
 expected_range = [min(map(min,rows)),max(map(max,rows))]
-opened, = apply(rpc, manifest, record, None, 'y', False, Path(record['model']).resolve(), series='B')
+rpc('engine.execute', dict(command='results.external.integrals', params=dict(path=str(manifest), catalog_only=True)))
+series_path = str(manifest.parent / record['series'][0]['file'])
+opened = rpc('engine.execute', dict(command='results.external.series', params=dict(path=series_path, component='y')))
 assert opened['shown'] and opened['frames'] == len(times) and opened['time_unit'] == 's', opened
 assert all(math.isclose(x,y,rel_tol=1e-6,abs_tol=1e-12) for x,y in zip(opened['range'],expected_range,strict=True)), opened
 def playback(**params):
@@ -98,7 +89,7 @@ proof = dict(opened=opened, range_from_solver=expected_range, first=first, scrub
 (out/'diffusion-playback.json').write_text(json.dumps(proof,indent=2),encoding='utf-8')
 print(json.dumps(proof,ensure_ascii=True))
 '@
-        & $Python -c $check $Bridge $port $OutputDir
+        & $Python -c $check $port $OutputDir
     } finally {
         if (-not $app.HasExited) { $app.Kill(); $app.WaitForExit() }
         elseif ($app.ExitCode -ne 0) { Get-Content "$work/gui.stderr" -Tail 30 }

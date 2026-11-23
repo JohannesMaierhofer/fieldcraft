@@ -34,10 +34,6 @@ $wheelPaths = (Get-ChildItem $wheels -Filter '*.whl').FullName
 & $python -m pip install --no-cache-dir --no-compile --no-index --no-deps @wheelPaths
 & $python -m pip check
 & $python -I -m uv --version
-Fetch $lock.bridge "$work/bridge.zip"
-Expand-Archive "$work/bridge.zip" "$work/bridge-source"
-$bridge = (Get-ChildItem "$work/bridge-source" -Directory).FullName
-Move-Item $bridge "$payload/bridge"
 Copy-Item "$PSScriptRoot/runtime-lock.json" $payload
 Copy-Item "$PSScriptRoot/SOLVER-NOTICES.txt" $payload
 Copy-Item "$PSScriptRoot/SOLVER-NOTICES.txt" $out

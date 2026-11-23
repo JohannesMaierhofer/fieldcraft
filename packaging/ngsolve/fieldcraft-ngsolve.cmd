@@ -1,7 +1,4 @@
 @echo off
 setlocal
-set "PYTHONHOME="
-set "PYTHONPATH="
-set "PYTHONNOUSERSITE=1"
-"%~dp0python\python.exe" "%~dp0bridge\workflow.py" %*
+"%~dp0fieldcraft-cli.exe" ngsolve %* --python "%~dp0python\python.exe"
 exit /b %errorlevel%

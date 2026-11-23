@@ -83,14 +83,14 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          docker run --rm -v "$PWD/dist/ngsolve:/packages:ro" ubuntu:22.04 bash -ec '
+          docker run --rm -v "$PWD/dist/ngsolve:/packages:ro" -v "$PWD/verification:/fixtures:ro" ubuntu:22.04 bash -ec '
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /packages/*.deb
             fieldcraft-ngsolve-cli --version
             mkdir /tmp/slab && cd /tmp/slab
-            cp /opt/fieldcraft-ngsolve/bridge/samples/* .
+            cp /fixtures/slab.json /fixtures/slab.analysis.json /fixtures/potential.py .
             fieldcraft-ngsolve-cli run slab.json
-            fieldcraft-ngsolve case slab.case.json first-run
+            fieldcraft-ngsolve run slab.analysis.json first-run
           '
       - name: Upload native window captures and numerical verification
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
