@@ -1,9 +1,8 @@
-//! The community links: the Donate and Discord pills in the title bar, before Report a bug, drawn
+//! The Discord community link in the title bar, before Report a bug, drawn
 //! by the kit's application bar (`solidcraft_ui_kit::app_bar::Pill`) in the services' own
 //! colours (`app_bar::brand`). A click opens the link's page through the host's URL opener
 //! ([`ModelApp::open_link`]); a click the control channel sends opens nothing. The small × inside
-//! a pill hides it, and the preferences remember that ([`Prefs::show_donate_button`],
-//! [`Prefs::show_discord_button`], both on by default).
+//! the pill hides it, and the preferences remember that ([`Prefs::show_discord_button`]).
 //!
 //! Adapted from SolidCraft's `crates/ui-egui/src/links.rs` (MIT OR Apache-2.0, ATTRIBUTION.md).
 
@@ -12,7 +11,6 @@ use solidcraft_ui_kit::app_bar;
 use crate::ModelApp;
 use crate::files::Prefs;
 
-pub const DONATE_URL: &str = "https://ko-fi.com/jyviko/tiers";
 pub const DISCORD_URL: &str = "https://discord.gg/FtU4NQNVDH";
 
 /// One link and its pill.
@@ -44,40 +42,22 @@ pub struct Link {
 pub const PILL_PREFIX: &str = "app_bar:";
 
 /// The links, left to right.
-pub const LINKS: &[Link] = &[
-    Link {
-        id: "donate",
-        region: "app_bar:donate",
-        hide_region: "app_bar:donate:hide",
-        url: DONATE_URL,
-        icon: "kofi",
-        label: "links.donate_label",
-        tip: "links.donate_tip",
-        hide_tip: "links.donate_hide_tip",
-        name: "links.donate_name",
-        hide_name: "links.donate_hide_name",
-        named: true,
-        fill: app_bar::brand::KOFI,
-        shown: |p| p.show_donate_button,
-        hide: |p| p.show_donate_button = false,
-    },
-    Link {
-        id: "discord",
-        region: "app_bar:discord",
-        hide_region: "app_bar:discord:hide",
-        url: DISCORD_URL,
-        icon: "discord",
-        label: "links.discord_label",
-        tip: "links.discord_tip",
-        hide_tip: "links.discord_hide_tip",
-        name: "links.discord_name",
-        hide_name: "links.discord_hide_name",
-        named: false,
-        fill: app_bar::brand::DISCORD,
-        shown: |p| p.show_discord_button,
-        hide: |p| p.show_discord_button = false,
-    },
-];
+pub const LINKS: &[Link] = &[Link {
+    id: "discord",
+    region: "app_bar:discord",
+    hide_region: "app_bar:discord:hide",
+    url: DISCORD_URL,
+    icon: "discord",
+    label: "links.discord_label",
+    tip: "links.discord_tip",
+    hide_tip: "links.discord_hide_tip",
+    name: "links.discord_name",
+    hide_name: "links.discord_hide_name",
+    named: false,
+    fill: app_bar::brand::DISCORD,
+    shown: |p| p.show_discord_button,
+    hide: |p| p.show_discord_button = false,
+}];
 
 pub fn by_id(id: &str) -> Option<&'static Link> {
     LINKS.iter().find(|l| l.id == id)
@@ -132,15 +112,13 @@ mod tests {
         }
     }
 
-    /// Both pills are on by default, and each switch hides only its own.
+    /// The community link is visible by default and can be hidden.
     #[test]
-    fn both_pills_are_on_by_default_and_each_switch_hides_only_its_own() {
+    fn discord_is_the_only_community_link_and_can_be_hidden() {
         let ids = |p: &Prefs| pills(p, true).iter().map(|p| p.id).collect::<Vec<_>>();
         let mut prefs = Prefs::default();
-        assert_eq!(ids(&prefs), ["donate", "discord"]);
-        (LINKS[0].hide)(&mut prefs);
         assert_eq!(ids(&prefs), ["discord"]);
-        (LINKS[1].hide)(&mut prefs);
+        (LINKS[0].hide)(&mut prefs);
         assert!(ids(&prefs).is_empty());
     }
 }

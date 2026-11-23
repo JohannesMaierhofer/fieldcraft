@@ -332,8 +332,7 @@ pub struct Prefs {
     /// Where History docks.
     #[serde(deserialize_with = "known_or_default")]
     pub history_dock: crate::shell::HistoryDock,
-    /// The title bar shows the Donate and the Discord pills ([`crate::links`]).
-    pub show_donate_button: bool,
+    /// Show the Discord link in the title bar ([`crate::links`]).
     pub show_discord_button: bool,
 }
 
@@ -361,7 +360,6 @@ impl Default for Prefs {
             browser_eye_left: false,
             status_bar: false,
             history_dock: crate::shell::HistoryDock::default(),
-            show_donate_button: true,
             show_discord_button: true,
         }
     }

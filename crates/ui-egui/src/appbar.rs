@@ -1,7 +1,7 @@
 //! The application bar: the window's title bar, drawn by the kit's application bar
 //! (`solidcraft_ui_kit::app_bar`) as SolidCraft's is: FieldCraft's mark and name, Home (the
 //! start page), File and its actions (save, undo, redo), a quick-access button (the theme), the
-//! model's document tab, Solve, Settings, Help, the community pills (Donate, Discord:
+//! model's document tab, Solve, Settings, Help, the community link (Discord:
 //! [`crate::links`]), Report a bug and the version. The command search
 //! is at the end of the ribbon's tab row, SolidCraft's default place for it ([`crate::toolbar`]).
 //! The kit's window chrome (`solidcraft_ui_kit::window_chrome`, [`crate::titlebar`]) makes its
@@ -612,31 +612,28 @@ mod tests {
         }
     }
 
-    /// Donate, then Discord, sit after the document tab and before Solve and Report a bug, as
-    /// SolidCraft's sit before its Update pill, each a capsule in its service's own colour (the kit's `app_bar::brand`), and `ui.inspect`'s layout names them.
+    /// The Discord link appears between the document tab and Solve.
     #[test]
     fn the_community_pills_sit_before_report_a_bug_in_their_own_colours() {
         let mut app = ModelApp::new(Session::default());
         let ctx = egui::Context::default();
         frame(&mut app, &ctx, Vec::new());
         let out = frame(&mut app, &ctx, Vec::new());
-        let (tab, donate, discord) = (region(&app, "document_tab"), region(&app, "app_bar:donate"), region(&app, "app_bar:discord"));
+        let (tab, discord) = (region(&app, "document_tab"), region(&app, "app_bar:discord"));
         let (solve, report) = (region(&app, "app_bar:solve"), region(&app, "app_bar:report"));
-        for (a, b) in [(tab, donate), (donate, discord), (discord, solve), (solve, report)] {
-            assert!(a.right() <= b.left(), "{a:?} before {b:?}: tab {tab:?} donate {donate:?} discord {discord:?} solve {solve:?} report {report:?}");
+        for (a, b) in [(tab, discord), (discord, solve), (solve, report)] {
+            assert!(a.right() <= b.left(), "{a:?} before {b:?}: tab {tab:?} discord {discord:?} solve {solve:?} report {report:?}");
         }
-        for (pill, fill) in [(donate, app_bar::brand::KOFI), (discord, app_bar::brand::DISCORD)] {
-            let painted = out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == fill && r.rect.contains_rect(pill)));
-            assert!(painted, "{pill:?} is not filled with {fill:?}");
-        }
+        assert!(
+            out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == app_bar::brand::DISCORD && r.rect.contains_rect(discord)))
+        );
         let (tx, _rx) = std::sync::mpsc::channel();
         let crate::control::Outcome::Done(reply) = crate::control::handle(&mut app, &ctx, &crate::ControlRequest::new("ui.inspect", json!({}), tx))
         else {
             panic!("ui.inspect replies at once")
         };
-        for k in ["app_bar:donate", "app_bar:discord"] {
-            assert!(reply["result"]["layout"][k].is_array(), "{k} not in ui.inspect's layout");
-        }
+        assert!(reply["result"]["layout"]["app_bar:discord"].is_array());
+        assert!(reply["result"]["layout"].get("app_bar:donate").is_none());
     }
 
     /// The × on a pill hides that pill alone, and the window remembers it in its preferences: the
@@ -649,17 +646,17 @@ mod tests {
         let ctx = egui::Context::default();
         frame(&mut app, &ctx, Vec::new());
         frame(&mut app, &ctx, Vec::new());
-        let hide = region(&app, "app_bar:donate:hide").center();
+        let hide = region(&app, "app_bar:discord:hide").center();
         click(&mut app, &ctx, hide);
         frame(&mut app, &ctx, Vec::new());
-        assert!(!app.layout.contains_key("app_bar:donate") && app.layout.contains_key("app_bar:discord"));
+        assert!(!app.layout.contains_key("app_bar:discord"));
         let prefs = serde_json::to_value(app.prefs()).unwrap_or_default();
-        assert_eq!((prefs["show_donate_button"].as_bool(), prefs["show_discord_button"].as_bool()), (Some(false), Some(true)), "{prefs}");
+        assert_eq!(prefs["show_discord_button"].as_bool(), Some(false), "{prefs}");
         let mut next = ModelApp::new(Session::default()).with_services(services());
         let ctx = egui::Context::default();
         frame(&mut next, &ctx, Vec::new());
         frame(&mut next, &ctx, Vec::new());
-        assert!(!next.layout.contains_key("app_bar:donate") && next.layout.contains_key("app_bar:discord"));
+        assert!(!next.layout.contains_key("app_bar:discord"));
     }
 
     /// A click on a pill opens its page through the host's URL opener; the same click sent over
@@ -679,22 +676,16 @@ mod tests {
         let ctx = egui::Context::default();
         frame(&mut app, &ctx, Vec::new());
         frame(&mut app, &ctx, Vec::new());
-        for k in ["app_bar:donate", "app_bar:discord"] {
-            let at = region(&app, k).center();
-            click(&mut app, &ctx, at);
+        let at = region(&app, "app_bar:discord").center();
+        click(&mut app, &ctx, at);
+        assert_eq!(*opened.borrow(), ["https://discord.gg/FtU4NQNVDH"]);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        crate::control::handle(&mut app, &ctx, &crate::ControlRequest::new("ui.click", json!({"x": at.x, "y": at.y}), tx));
+        while !app.synthetic.is_empty() {
+            let out = frame(&mut app, &ctx, Vec::new());
+            assert!(!out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(_))));
         }
-        assert_eq!(*opened.borrow(), ["https://ko-fi.com/jyviko/tiers", "https://discord.gg/FtU4NQNVDH"]);
-        for k in ["app_bar:donate", "app_bar:discord"] {
-            let at = region(&app, k).center();
-            let (tx, _rx) = std::sync::mpsc::channel();
-            crate::control::handle(&mut app, &ctx, &crate::ControlRequest::new("ui.click", json!({"x": at.x, "y": at.y}), tx));
-            while !app.synthetic.is_empty() {
-                let out = frame(&mut app, &ctx, Vec::new());
-                assert!(!out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(_))), "{k}");
-            }
-            frame(&mut app, &ctx, Vec::new());
-        }
-        assert_eq!(opened.borrow().len(), 2, "{:?}", opened.borrow());
+        assert_eq!(opened.borrow().len(), 1);
     }
 
     /// The Help menu fits a laptop window (1280 × 800): every row, down to the version, can be
