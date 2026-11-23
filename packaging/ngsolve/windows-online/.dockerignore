@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!package-docker.sh
+!setup.nsi
+!install.ps1
+!INSTALL.txt
+!cargo-xwin.lock

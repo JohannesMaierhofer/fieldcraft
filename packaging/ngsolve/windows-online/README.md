@@ -13,16 +13,24 @@ Open **Solver examples** from **FieldCraft with NGSolve (network)** in the Start
 
 The first command creates the mesh. The second runs the Python script named in the case and opens the result window. Under **External Analysis**, expand **Fields** and select `potential` or `electric_field`. **Integrals** contains the stored energy, approximately 4.42709 × 10⁻¹⁴ J. For another calculation, edit the case or its script, save it, and specify a new output directory. A Python exception prints its traceback in PowerShell.
 
-## Build from source on Windows
+## Build and package in Linux Docker
 
-Use a clean checkout of the desktop revision above, Rust 1.99.1 with the target standard library, the matching Microsoft C++ toolchain and Windows SDK, and the NSIS compiler with its distribution license. The installer recipe may live in another checkout. For a native build, start the Visual Studio developer shell for the target architecture. A Windows x64 host can also cross-compile the ARM64 installer. Set `CARGO_HOME`, `RUSTUP_HOME`, `CARGO_TARGET_DIR` and `TEMP` to a sufficiently large build drive when required.
+Use a Linux Docker engine (AMD64 or ARM64) and run these commands in this directory. The image installs Rust 1.99.1, Clang/LLVM, cargo-xwin and NSIS. Each container checks out the exact public desktop commit, cross-compiles the selected MSVC target and packages it with Linux NSIS. Cargo and the Microsoft SDK download caches live in a project-owned Linux volume. Allow sufficient disk space on the Docker engine. The build fetches the Microsoft CRT and SDK under their distribution terms. [cargo-xwin documentation](https://github.com/rust-cross/cargo-xwin)
 
-```powershell
-.\package-source.ps1 -Arch x64 -SourceRoot F:\desktop -Output F:\output-x64 -MakeNsis F:\nsis\makensis.exe -NsisLicense F:\nsis\COPYING
-.\package-source.ps1 -Arch arm64 -SourceRoot F:\desktop -Output F:\output-arm64 -MakeNsis F:\nsis\makensis.exe -NsisLicense F:\nsis\COPYING
+```sh
+docker build -t fieldcraft-windows-r2 .
+docker volume create fieldcraft-windows-r2-cache
+for arch in x64 arm64; do
+    job="fieldcraft-windows-r2-$arch"
+    docker run --name "$job" \
+        --mount source=fieldcraft-windows-r2-cache,target=/cache \
+        fieldcraft-windows-r2 "$arch" || exit 1
+    docker cp "$job:/out/." .
+    docker rm "$job"
+done
 ```
 
-The script checks the source revision and cleanliness, builds both executables with Cargo's locked dependency graph, checks their PE machine type, generates third-party license notices, and records the SHA-256 of each staged file. When the host architecture matches the target, it also runs the CLI and compares the feature catalog with the reference documentation. Outputs include `FieldCraft-NGSolve-0.8.1-r2-windows-{x64,arm64}-network.exe`, its SHA-256 sidecar, the payload, and a per-architecture build receipt. The example compiler distribution is the [NSIS 3.11 portable ZIP](https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11.zip/download), SHA-256 `c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1`.
+Each build checks its PE machine type and the compiled external-deformation command, regenerates the dependency license notices, and compares all 13 files after independently decompressing the installer. The outputs include `FieldCraft-NGSolve-0.8.1-r2-windows-{x64,arm64}-network.exe`, its SHA-256 sidecar, and a JSON receipt identifying the source, build tools, container, PE target, and all payload hashes. Run the physical Windows acceptance test below for runtime verification.
 
 ## Install and verify
 
