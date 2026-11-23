@@ -108,7 +108,7 @@ if [[ -f "$here/initial-preferences" && "$volume" == / ]]; then
     console_uid=$(/usr/bin/stat -f %u /dev/console)
     if [[ "$console_uid" =~ ^[0-9]+$ && "$console_uid" -ge 501 ]]; then
         # The installer opens its private script. All operations on the home directory run as its owner.
-        if ! /usr/bin/sudo -n -H -u "#$console_uid" -- "$package_dir/python/bin/python3" -I -B - < "$here/initial-preferences"; then
+        if ! /usr/bin/sudo -n -H -u "#$console_uid" -- /bin/sh -s < "$here/initial-preferences"; then
             echo "Could not initialize FieldCraft preferences for the logged-in user." >&2
         fi
     fi
