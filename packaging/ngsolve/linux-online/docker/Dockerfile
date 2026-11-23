@@ -4,3 +4,13 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     binutils build-essential ca-certificates cmake curl dpkg-dev git libasound2-dev \
     libfontconfig-dev libgtk-3-dev libssl-dev libudev-dev libvulkan-dev libxkbcommon-x11-dev \
     perl pkg-config unzip util-linux zstd && rm -rf /var/lib/apt/lists/*
+COPY desktop.pack recipe.pack /inputs/
+ARG FC_PACKAGING_REVISION
+RUN set -eu; \
+    git init -q /inputs/recipe; \
+    git -C /inputs/recipe index-pack --stdin < /inputs/recipe.pack > /dev/null; \
+    echo "$FC_PACKAGING_REVISION" > /inputs/recipe/.git/shallow; \
+    git -C /inputs/recipe update-ref HEAD "$FC_PACKAGING_REVISION"; \
+    git -C /inputs/recipe checkout "$FC_PACKAGING_REVISION" -- packaging/ngsolve; \
+    test -x /inputs/recipe/packaging/ngsolve/linux-online/verify-r2.sh; \
+    rm /inputs/recipe.pack

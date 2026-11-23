@@ -16,6 +16,8 @@ git -C "$repo" diff --quiet HEAD -- packaging/ngsolve || { echo "Commit packagin
 mkdir -p "$1"
 output=$(cd "$1" && pwd)
 stage=$(mktemp -d)
+context=$stage/build-context
+mkdir "$context"
 trap 'rm -rf -- "$stage"' EXIT
 
 # Use one commit and its trees and blobs. Other refs, histories and local files stay outside Docker.
@@ -27,24 +29,22 @@ fi
 {
     git -C "$src_repo" rev-parse "$desktop" "$desktop^{tree}"
     git -C "$src_repo" ls-tree -rt --format='%(objectname)' "$desktop"
-} | sort -u | git -C "$src_repo" pack-objects --stdout > "$stage/desktop.pack"
+} | sort -u | git -C "$src_repo" pack-objects --stdout > "$context/desktop.pack"
 {
     git -C "$repo" rev-parse "$packager" "$packager^{tree}" "$packager:packaging"
     git -C "$repo" ls-tree -rt --format='%(objectname)' "$packager" -- packaging/ngsolve
-} | sort -u | git -C "$repo" pack-objects --stdout > "$stage/recipe.pack"
-git init -q "$stage/recipe"
-git -C "$stage/recipe" index-pack --stdin < "$stage/recipe.pack" >/dev/null
-echo "$packager" > "$stage/recipe/.git/shallow"
-git -C "$stage/recipe" update-ref HEAD "$packager"
-git -C "$stage/recipe" checkout "$packager" -- packaging/ngsolve
-rm -f -- "$stage/recipe.pack"
+} | sort -u | git -C "$repo" pack-objects --stdout > "$context/recipe.pack"
+git -C "$repo" show "$packager:packaging/ngsolve/linux-online/docker/Dockerfile" > "$context/Dockerfile"
 
-mkdir "$stage/build-context"
-cp "$stage/recipe/packaging/ngsolve/linux-online/docker/Dockerfile" "$stage/build-context/"
-docker build --platform linux/amd64 --pull --tag "$image" --label "org.opencontainers.image.revision=$packager" "$stage/build-context"
+# Keep both snapshots inside the image so host cleanup cannot remove a running build's inputs.
+docker build --platform linux/amd64 --pull --tag "$image" --iidfile "$stage/image-id" \
+    --build-arg "FC_PACKAGING_REVISION=$packager" --label "org.opencontainers.image.revision=$packager" "$context"
+image_id=$(cat "$stage/image-id")
+docker version --format 'Docker Engine {{.Server.Version}}' > "$output/docker-builder.txt"
+docker info --format 'Docker host {{.OSType}}/{{.Architecture}}' >> "$output/docker-builder.txt"
+docker image inspect --format 'Build image {{.Id}}' "$image_id" >> "$output/docker-builder.txt"
 docker volume create "$volume" >/dev/null
-mounts=(--mount "type=bind,src=$stage,dst=/inputs,readonly"
-        --mount "type=bind,src=$output,dst=/out" --mount "type=volume,src=$volume,dst=/work")
+mounts=(--mount "type=bind,src=$output,dst=/out" --mount "type=volume,src=$volume,dst=/work")
 if [[ -n ${FC_CARGO_CHECKPOINT:-} ]]; then
     [[ -f "$FC_CARGO_CHECKPOINT" ]] || { echo "Supplied Cargo checkpoint does not exist" >&2; exit 1; }
     cache_file=$(cd "$(dirname "$FC_CARGO_CHECKPOINT")" && pwd)/$(basename "$FC_CARGO_CHECKPOINT")
@@ -52,7 +52,4 @@ if [[ -n ${FC_CARGO_CHECKPOINT:-} ]]; then
 fi
 docker run --rm --platform linux/amd64 "${mounts[@]}" \
     -e FC_INPUT_DIR=/inputs -e FC_OUTPUT_DIR=/out -e FC_WORK_ROOT=/work -e FC_BUILD_JOBS="$jobs" \
-    "$image" bash /inputs/recipe/packaging/ngsolve/linux-online/docker/build-in-container.sh
-docker version --format 'Docker Engine {{.Server.Version}}' > "$output/docker-builder.txt"
-docker info --format 'Docker host {{.OSType}}/{{.Architecture}}' >> "$output/docker-builder.txt"
-docker image inspect --format 'Build image {{.Id}}' "$image" >> "$output/docker-builder.txt"
+    "$image_id" bash /inputs/recipe/packaging/ngsolve/linux-online/docker/build-in-container.sh
