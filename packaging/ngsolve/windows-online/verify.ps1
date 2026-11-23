@@ -37,21 +37,38 @@ try {
     $env:CI = $null
     $env:LOCALAPPDATA = Join-Path $Work 'isolated local appdata'
     $prefs = Join-Path (Join-Path $env:LOCALAPPDATA 'FieldCraft') 'prefs.json'
-    foreach ($attempt in 1,2) {
+    foreach ($attempt in 1,2,3) {
         # NSIS requires /D last, without quotes, including when the directory contains spaces.
         $process = Start-Process -FilePath $Installer -ArgumentList "/S /NOSHORTCUTS /D=$prefix" -Wait -PassThru
         if ($process.ExitCode -ne 0) { throw "Installer attempt $attempt returned $($process.ExitCode)" }
         if ($attempt -eq 1) {
+            $generations = @(Get-ChildItem -LiteralPath $prefix -Directory -Filter 'g-*')
+            if ($generations.Count -ne 1) { throw 'Expected exactly one complete generation' }
+            $app = $generations[0].FullName
+            $receipt = Get-Content -LiteralPath "$app\identity.json" -Raw | ConvertFrom-Json
+            if ($generations[0].Name -cne ('g-' + $receipt.generation) -or $receipt.arch -ne $Arch -or
+                (Get-FileHash -LiteralPath "$app\runtime-lock.json").Hash -ne $receipt.runtime_lock_sha256) {
+                throw 'Runtime lock or generation differs from the receipt'
+            }
             $fresh = Get-Content -LiteralPath $prefs -Raw | ConvertFrom-Json
             if ($fresh.show_donate_button -isnot [bool] -or $fresh.show_donate_button -or
                 $fresh.update_check -isnot [bool] -or $fresh.update_check) { throw 'Incorrect fresh-profile switches' }
             [IO.File]::WriteAllText($prefs, '{"show_donate_button":true,"update_check":true,"reverse_zoom":true}')
             $customHash = (Get-FileHash -LiteralPath $prefs).Hash
+            # Exercise actual bridge damage. Reinstall must replace the broken case dispatcher.
+            Move-Item -LiteralPath "$app\bridge\case_run.py" -Destination (Join-Path $Work 'original-case_run.py')
         } elseif ((Get-FileHash -LiteralPath $prefs).Hash -ne $customHash) {
             throw 'Installer changed an existing preference file.'
         }
     }
-    $app = Join-Path $prefix ("9def8cf4-74393901-" + $Arch)
+    $preserved = @(Get-ChildItem -LiteralPath $prefix -Filter '.fieldcraft-preserved-*' -Directory -Force)
+    if ($preserved.Count -ne 1 -or (Test-Path -LiteralPath (Join-Path $preserved[0].FullName 'bridge\case_run.py'))) {
+        throw 'Missing or invalid preserved copy of the damaged generation'
+    }
+    if ((Get-FileHash -LiteralPath "$app\bridge\case_run.py").Hash -ne
+        (Get-FileHash -LiteralPath (Join-Path $Work 'original-case_run.py')).Hash) {
+        throw 'Missing case dispatcher was not repaired byte for byte'
+    }
     $identity = Get-Content -LiteralPath "$app\identity.json" -Raw | ConvertFrom-Json
     $expected = @{x64='0x8664'; arm64='0xaa64'}[$Arch]
     $gui = Pe-Machine "$app\fieldcraft.exe"
@@ -77,7 +94,10 @@ try {
             archive_sha256 = (Get-FileHash -LiteralPath $Installer).Hash.ToLowerInvariant()
             desktop = $identity.desktop
             bridge = $identity.bridge
-            install_count = 2
+            runtime_lock_sha256 = $identity.runtime_lock_sha256
+            generation = $identity.generation
+            damaged_case_repaired = $true
+            install_count = 3
             fresh_profile_donate = $fresh.show_donate_button
             fresh_profile_update_check = $fresh.update_check
             existing_profile_byte_identical = $true

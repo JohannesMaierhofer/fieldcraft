@@ -4,11 +4,11 @@ The x64 and ARM64 packages use the FieldCraft 0.8.1 desktop and CLI from revisio
 
 The user runs one per-user installer. It downloads its private CPython from Astral, the five pinned wheels from PyPI, and the bridge from the bridge project's source archive. Each download must match the SHA-256 in the shared runtime lock before extraction or execution. Select x64 for Windows 10 (1809+) or Windows 11 on Intel/AMD. Windows 11 on ARM64 runs the native ARM64 desktop and the x64 solver under Windows' application emulation. Windows PowerShell 5.1, the system tar.exe, and outbound HTTPS to the pinned origins are required.
 
-The default installation directory is `%LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network\9def8cf4-74393901-<arch>`. A fresh profile starts with the Donate button and upstream update checks disabled. The installer preserves an existing preference file byte for byte. The Start menu includes the desktop and examples. The installed network-edition instructions describe removal. Windows' signature verification reports an unsigned publisher for these local builds. Verify the separately supplied installer digest.
+The default installation directory is `%LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network\g-<generation>`. The complete runtime-lock digest, desktop, architecture, bridge and core file hashes determine the 52-character generation key. A fresh profile starts with the Donate button and upstream update checks disabled. The installer preserves an existing preference file byte for byte. The Start menu includes the desktop and examples. The installed network-edition instructions describe removal. Windows' signature verification reports an unsigned publisher for these local builds. Verify the separately supplied installer digest.
 
 ## Rebuild
 
-The build host uses Python 3.11+ and a separate set of [companion build helpers at revision 376dd39](https://github.com/JohannesMaierhofer/fieldcraft-ngsolve/tree/376dd39e02dabb9abb06dcaa558c288ac667bdf2/packaging/windows). Check out that exact commit and set `helpers` to its absolute `packaging/windows` directory. Run the following steps from this FieldCraft `windows-online` directory. The helpers read the FieldCraft recipe via `--recipe` and leave the separately pinned solver bridge unchanged.
+The build host uses Python 3.11+ and a separate set of [companion build helpers at revision dfe7578](https://github.com/JohannesMaierhofer/fieldcraft-ngsolve/tree/dfe7578de6e01676f31cde9e27743ccef7d4c011/packaging/windows). Check out that exact commit and set `helpers` to its absolute `packaging/windows` directory. Run the following steps from this FieldCraft `windows-online` directory. The helpers read the FieldCraft recipe via `--recipe` and leave the separately pinned solver bridge unchanged.
 
 The original archives are the `fieldcraft-ngsolve-windows-x64` (artifact 14769718249) and `fieldcraft-ngsolve-windows-arm64` (14770950364) outputs of the [desktop build](https://github.com/JohannesMaierhofer/fieldcraft/actions/runs/45060336394). The immutable original ZIP and internal installer digests are in the companion `prepare.py`. Building new installers does not execute the old installers.
 
@@ -30,6 +30,8 @@ Run this in Windows PowerShell with a fresh local scratch directory. The test in
 ```powershell
 .\verify.ps1 -Installer C:\Downloads\FieldCraft-NGSolve-0.8.1-9def8cf4-windows-x64-network.exe -Arch x64 -Work "$env:TEMP\fieldcraft-online-qa"
 ```
+
+Run `./verify-recovery.ps1` alongside the recipe to test state recovery without downloading a runtime. It starts a writer process that exits before publishing its receipt, reruns the production claim logic and verifies both preservation of unrelated files and rejection of a mismatched receipt. The numerical installation test deliberately removes the isolated copy of `case_run.py`, repairs it with a second invocation, then verifies the repaired installation with a third invocation. A repaired or interrupted generation is preserved under `.fieldcraft-preserved-*` in the selected prefix. The installer never replaces an unrecognized directory.
 
 The analytical energy is 4.4270939064 × 10⁻¹⁴ J. The script accepts a relative deviation up to 10⁻⁸. Historical verification of the embedded desktop and new network-installer verification are recorded separately in `VERIFICATION.md`.
 

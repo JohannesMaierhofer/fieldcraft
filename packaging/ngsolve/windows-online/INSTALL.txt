@@ -18,8 +18,15 @@ license files. The application licenses and NSIS notices are in licenses.
 Start FieldCraft from the Start menu. In the installed version directory run
 fieldcraft-ngsolve.cmd --help to use the bridge. An ordinary installation uses
 %LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network. Rerunning the installer
-validates an existing matching version. The selected prefix is private to this
+validates the complete lock and the working case dispatcher in an existing
+matching generation. The g- directory identifies the desktop, bridge and all
+runtime pins. A changed pin gets its own generation. The selected prefix is private to this
 installation. No administrator access or system Python changes are required.
+
+An interrupted installation carries a package-specific ownership marker from
+the first write. A rerun keeps any recognized incomplete or damaged generation
+in a .fieldcraft-preserved-* sibling and rebuilds its stable Python prefix.
+Review that sibling before removing it. Unrecognized directories are preserved.
 
 On a new profile the Donate button and built-in upstream update check start
 disabled. Existing preference files keep their exact contents. You can change
