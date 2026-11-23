@@ -441,6 +441,8 @@ pub struct ModelApp {
     /// Bumped whenever the model may have changed.
     revision: u64,
     display: (Option<u64>, DisplayMesh),
+    /// A deformed external mesh is reused until the base mesh, field frame, or dimensionless scale changes.
+    external_shape: Option<((u64, u64, u64), DisplayMesh)>,
     /// The analysis setup's symbols, built with the display data.
     glyphs: Glyphs,
     /// The results plot and what it was built for.
@@ -620,6 +622,7 @@ impl ModelApp {
             capturer: Ok(None),
             revision: 0,
             display: (None, DisplayMesh::default()),
+            external_shape: None,
             glyphs: Glyphs::default(),
             plot: (None, None),
             probe: None,
@@ -1268,7 +1271,24 @@ impl ModelApp {
                 self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::Fit);
             }
         }
+        let scale = self.session.external_deformation_scale();
+        if let Some(field) = self.session.external_contour().filter(|f| scale > 0.0 && f.has_displacements()) {
+            let key = (self.revision, field.display_id, scale.to_bits());
+            if self.external_shape.as_ref().is_none_or(|(old, _)| *old != key) {
+                if self.session.external_series().is_none_or(|series| !series.playing()) {
+                    self.viewport.recheck = framing::RECHECK_FRAMES;
+                }
+                self.external_shape = Some((key, field.displaced(&self.display.1, scale)));
+            }
+        } else {
+            self.external_shape = None;
+        }
         &self.display.1
+    }
+
+    /// External displacement and the source mesh positions are both in SI.
+    fn external_or_base_mesh(&self) -> &DisplayMesh {
+        self.external_shape.as_ref().map_or(&self.display.1, |(_, mesh)| mesh)
     }
 
     /// Definitions whose symbols are a sample (`Clamp: 400 of 12000 nodes`), as drawn last.
@@ -1284,6 +1304,7 @@ impl ModelApp {
         let marks = fieldcraft_engine::view::geometry_marks(&self.session).map(|m| m as *const _ as usize);
         (self.revision, self.ui.style, self.ui.show(), self.ui.dark, plot, self.selected_datum(), marks).hash(&mut h);
         self.session.external_contour().map(|f| f.display_id).hash(&mut h);
+        self.session.external_deformation_scale().to_bits().hash(&mut h);
         format!("{:?}", self.datum_preview()).hash(&mut h);
         h.finish()
     }
@@ -1333,34 +1354,35 @@ impl ModelApp {
         if self.scene.0 != Some(key) {
             let t = theme::Tokens::get(self.ui.dark);
             let (style, show) = (self.ui.style, self.ui.show());
+            let display = self.external_or_base_mesh();
             let mut s = match &self.plot.1 {
                 Some(p) => results::scene(p, style, show, &t),
-                None => scene::build(&self.display.1, style, show, &t),
+                None => scene::build(display, style, show, &t),
             };
             // The elements Mark Bad Elements marked, in the error colour over the element faces.
             if self.plot.1.is_none() && show.mesh && style != scene::Style::Wireframe {
                 let marked = fieldcraft_engine::view::marked(&self.session);
-                fieldcraft_engine::view::mark(&mut s, &self.display.1, &marked, theme::rgb(t.error));
+                fieldcraft_engine::view::mark(&mut s, display, &marked, theme::rgb(t.error));
             }
             if show.mesh
                 && style != scene::Style::Wireframe
                 && let Some(field) = self.session.external_contour()
             {
-                field.draw(&self.display.1, &mut s, &t.contour_stops(), theme::rgb(t.contour_over), theme::rgb(t.no_result));
+                field.draw(display, &mut s, &t.contour_stops(), theme::rgb(t.contour_over), theme::rgb(t.no_result));
             }
             // Faces merged for meshing, each one face in the warm colour where geometry faces are
             // drawn; then what Check Geometry found, in the error colour: its faces, short edges
             // and a dot at each finding over everything.
-            let faces = style != scene::Style::Wireframe && !(show.mesh && !self.display.1.tris.is_empty());
+            let faces = style != scene::Style::Wireframe && !(show.mesh && !display.tris.is_empty());
             let bodies: Vec<&str> = self.pick.names.iter().map(|n| n.name.as_str()).collect();
             if show.geometry && self.plot.1.is_none() && faces {
-                fieldcraft_engine::view::draw_merged_faces(&mut s, &self.display.1, &self.session, &bodies, theme::rgb(t.warm));
+                fieldcraft_engine::view::draw_merged_faces(&mut s, display, &self.session, &bodies, theme::rgb(t.warm));
             }
             if let Some(marks) = fieldcraft_engine::view::geometry_marks(&self.session).filter(|_| show.geometry && self.plot.1.is_none()) {
-                fieldcraft_engine::view::draw_geometry_marks(&mut s, &self.display.1, &bodies, marks, faces, theme::rgb(t.error));
+                fieldcraft_engine::view::draw_geometry_marks(&mut s, display, &bodies, marks, faces, theme::rgb(t.error));
             }
             let mut datums = Aabb3::EMPTY;
-            if show.geometry && self.plot.1.is_none() {
+            if show.geometry && self.plot.1.is_none() && self.external_shape.is_none() {
                 datums = scene::datums(&mut s, &self.session, &self.display.1.bounds, self.selected_datum().as_deref(), &t);
                 if let Some(d) = self.datum_preview() {
                     datums.union(scene::datum_preview(&mut s, d, &self.display.1.bounds, &t));
@@ -1600,6 +1622,7 @@ impl ModelApp {
         let show = self.ui.show();
         (self.revision, show.loads, show.interactions, self.ui.result_symbols, self.ui.dark, plot, unit.map(|u| u.0), self.highlighted())
             .hash(&mut h);
+        self.external_shape.as_ref().map(|(key, _)| key).hash(&mut h);
         let key = h.finish();
         if self.symbols.0 != Some(key) {
             // Over a results plot: only when asked for, and only the shown step's.
@@ -1612,7 +1635,7 @@ impl ModelApp {
             }
             let glyphs = if step.is_some() { &self.step_glyphs.1 } else { &self.glyphs };
             let t = theme::Tokens::get(self.ui.dark);
-            let drawn = self.plot.1.as_ref().map_or(&self.display.1, |p| &p.display);
+            let drawn = self.plot.1.as_ref().map_or(self.external_or_base_mesh(), |p| &p.display);
             let mut s = Scene::default();
             let unit = unit.map_or(f64::NAN, |u| u.1);
             let d = if step.is_some() && !self.ui.result_symbols {
@@ -1629,7 +1652,7 @@ impl ModelApp {
     /// (deformed) shape and the reference points. Datums are never framed (#295): they are drawn
     /// at the model's extent, so framing them would only shrink the part.
     fn drawn_bounds(&self) -> Aabb3 {
-        let mut bounds = self.display.1.bounds;
+        let mut bounds = self.external_or_base_mesh().bounds;
         if let Some(p) = &self.plot.1 {
             bounds.union(p.display.bounds);
             // A fluid step's slice and streamlines fill its domain.
@@ -1705,7 +1728,7 @@ impl ModelApp {
         let index = self.pick_index();
         let plot = self.plot();
         let (show_mesh, show_geometry) = (self.ui.show_mesh, self.ui.show_geometry);
-        let display = plot.as_ref().map_or(&self.display.1, |p| &p.display);
+        let display = plot.as_ref().map_or(self.external_or_base_mesh(), |p| &p.display);
         let mesh_faces = show_mesh && !display.tris.is_empty();
         let picker = selection::Picker {
             display,
@@ -3621,6 +3644,42 @@ mod tests {
         // The model's faces again (without the setup's symbols).
         app.ui.show_loads = false;
         assert_eq!(app.scene().1.tris.len(), faces);
+    }
+
+    #[test]
+    fn external_displacement_scales_the_drawn_mesh_and_picker_in_si() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label":7, "xyz":[0,0,0]})).unwrap();
+        app.run("mesh.node.add", json!({"label":9, "xyz":[0,1,0]})).unwrap();
+        app.run("mesh.element.add", json!({"label":1, "kind":"rod2", "nodes":[7,9]})).unwrap();
+        app.run("model.units", json!({"system":"mm-t-s-N-MPa"})).unwrap();
+        let path = std::env::temp_dir().join(format!("fieldcraft-ui-displacement-{}.json", std::process::id()));
+        // The same saved two-node mesh as the external browser selection test.
+        let data = json!({"format":"fieldcraft-nodal-field/1","mesh_sha256":"b15d172a207e96ae957cc817a244c95fa30ca880935c48e441e05758c825af5a",
+            "name":"translation","unit":"m","components":3,"node_ids":[7,9],"values":[0.0,0.0,0.0,0.001,0.0,0.0]});
+        std::fs::write(&path, data.to_string()).unwrap();
+        app.run("results.external.contour", json!({"path":path,"component":"y"})).unwrap();
+        let reference = app.display().node_position(9).unwrap();
+        let original = app.scene().0;
+        let ctx = egui::Context::default();
+        draw(&mut app, &ctx, 1200., 900.);
+        assert!(app.layout.contains_key("external/deformed"));
+        assert!(app.layout.contains_key("external/deformation-scale"));
+        for scale in [1.0, 2.5, 0.25] {
+            app.run("results.external.deformed", json!({"scale":scale})).unwrap();
+            assert_ne!(app.scene().0, original);
+            let expected = reference + Vec3::new(scale * 0.001, 0.0, 0.0);
+            app.fit_view();
+            assert_eq!(app.drawn_bounds().max.x, expected.x);
+            app.with_picker(|p| {
+                assert_eq!(p.display.node_position(9), Some(expected));
+                assert_eq!(p.display.lines.first().unwrap().b, expected);
+            });
+        }
+        app.run("results.external.deformed", json!({"scale":0.0})).unwrap();
+        app.with_picker(|p| assert_eq!(p.display.node_position(9), Some(reference)));
+        assert_eq!(app.session.model.node(9).unwrap().xyz[0], 0.0);
+        std::fs::remove_file(path).unwrap();
     }
 
     /// One frame of the window at `w` × `h` points.

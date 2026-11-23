@@ -74,6 +74,24 @@ commands (files, undo, `model.info`) leave the ribbon where it is.
 | `ui.render` | `path`, `width?` (default 1280), `height?` (default 800): whole pixels, each 1–8192 and at most 16 megapixels in all; `scale?` (pixels per point, 0.5–4, default the window's) | CPU render of the model with the current camera, view settings and selection highlight (no window or GPU needed). Symbols, lines and nodes are sized in points, so a render at the window's device resolution matches the window. A size out of range, or a scene over 20 million primitives, is an error |
 | `app.quit` | — | closes the window |
 
+An external three-component nodal field with unit `m` can move the displayed mesh.
+Set `deformation_scale` when opening a field or series, or run
+`results.external.deformed {"scale":2.5}` while it is visible. The mesh uses
+all three components even when the contour shows only x, y, or z. A scale of
+one shows the physical displacement, zero shows the reference mesh, and
+positive fractional values are supported. The scale is dimensionless and
+applies to every frame. The solver results and model coordinates retain their
+original values. `ui.inspect.external_deformation_scale` reports the active
+factor, or null when the selected field has no displacement vectors.
+
+For a voltage sweep or other increasing parameter, use a
+`fieldcraft-nodal-series/2` manifest with `axis: {"label":"Voltage","unit":"V"}`
+and `frames: [{"parameter":0.0,"file":"u0.json"},{"parameter":5.0,"file":"u1.json"}]`.
+Supply the same name, unit, component count, and source mesh hash as the nodal
+field files. `results.external.playback` reports the current parameter and its
+axis. Time histories continue to use `fieldcraft-nodal-series/1` with timestamps
+in seconds.
+
 When an external run is loaded, the `external` node in `ui.inspect.browser` includes a
 `groups` object. Each populated group (`fields`, `series`, `integrals`, `materials`,
 `boundaries`, `interfaces`, `loads`) contains rows with a `name` and display `detail`.

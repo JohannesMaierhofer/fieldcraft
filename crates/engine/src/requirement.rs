@@ -85,6 +85,8 @@ pub enum Requirement {
     ResultsShown,
     /// A recorded external field series on the current mesh.
     ExternalSeries,
+    /// An active external three-component vector field in SI meters.
+    ExternalDisplacement,
     /// A saved view.
     SavedView,
     /// A render.
@@ -141,6 +143,7 @@ impl Requirement {
             Requirement::Result => s.result_steps().next().is_some(),
             Requirement::ResultsShown => s.results_view.is_some(),
             Requirement::ExternalSeries => s.external_series().is_some(),
+            Requirement::ExternalDisplacement => s.external_contour().is_some_and(|field| field.has_displacements()),
             Requirement::SavedView => !s.view.views.is_empty(),
             Requirement::Render => !s.view.renders.is_empty(),
         }
@@ -185,6 +188,7 @@ impl Requirement {
             Requirement::Result => "a solved step",
             Requirement::ResultsShown => "results on the display",
             Requirement::ExternalSeries => "an external field series on the current mesh",
+            Requirement::ExternalDisplacement => "an external displacement vector field in meters on this mesh",
             Requirement::SavedView => "a saved view",
             Requirement::Render => "a render",
         }
@@ -226,6 +230,7 @@ impl Requirement {
             Requirement::Result => "solve.run",
             Requirement::ResultsShown => "results.contour",
             Requirement::ExternalSeries => "results.external.series",
+            Requirement::ExternalDisplacement => "results.external.contour",
             Requirement::SavedView => "view.save",
             Requirement::Render => "results.render.save",
         }

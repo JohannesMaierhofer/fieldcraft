@@ -278,6 +278,7 @@ pub fn handle(app: &mut ModelApp, ctx: &egui::Context, req: &ControlRequest) -> 
             "status": app.status,
             "model": {"nodes": app.session.model.nodes().len(), "elements": app.session.model.elements().len()},
             "results": app.session.results_report(),
+            "external_deformation_scale": app.session.external_contour().filter(|f| f.has_displacements()).map(|_| app.session.external_deformation_scale()),
             "probe": app.probe,
             "busy": app.busy(),
             "job": app.loading.as_ref().map(|l| l.to_json()),
