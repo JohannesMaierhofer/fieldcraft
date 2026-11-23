@@ -8,29 +8,25 @@ Keep published tags immutable. Use the next revision for a replacement binary.
 The integration branch is `codex/ngsolve-installers`. Separate branches carry the Intel
 build, result readers and model browser for upstream review.
 
-Assemble each installer locally and verify its installation before attaching it to the
-draft release. The release notes identify the desktop revision, solver bridge, packager
-and test host for each asset. For a compatibility installer, record the revision of the
-previously built GUI and CLI and identify the features available in that desktop.
+Build the fork packages locally. For installer revision r2, build the GUI and CLI from clean desktop commit `8b495f31389512c7f599ef17b5ee3a4d0cc39bc9`. Both report `0.8.1-ngsolve.r1`. The r2 installer includes the new model browser and adjustable mesh deformation on each platform. macOS Installer receipts use `0.8.1.2`. The solver bridge is pinned to `74393901cf1b6fe70e5956003f948c9fe5eee889`, with NGSolve 6.2.2608.
 
-On an Intel Mac with the repository toolchain, build the application, then wrap it in
-the product installer which fetches the locked solver runtime from its distributors.
+| Target | Local build recipe | Output |
+|---|---|---|
+| Intel macOS | Build the signed app in the desktop checkout with `packaging/macos/package.sh --arch x86_64`, then use the r2 package command below. | Intel PKG |
+| Apple silicon macOS | [Build and verify the native app on Apple silicon](../packaging/macos/ngsolve/build-r2-arm64.sh). | Arm64 PKG |
+| Windows x64 and ARM64 | [Build the desktop and per-user installer for each target](../packaging/ngsolve/windows-online/README.md). Windows on Arm uses the x64 solver through Windows emulation. | Two EXE installers |
+| Debian/Ubuntu amd64 | [Build the desktop, measure its ABI requirements, and assemble the package](../packaging/ngsolve/linux-online/R2.md). | amd64 DEB |
+
+In the desktop checkout set `FIELDCRAFT_VERSION=0.8.1-ngsolve.r1` and `FIELDCRAFT_BUILD_SHA=8b495f31389512c7f599ef17b5ee3a4d0cc39bc9` before building the Intel app. From the r2 packaging checkout, pass its path to the packaging command.
 
 ```sh
-export CARGO_TARGET_DIR="$PWD/target"
-export FIELDCRAFT_VERSION=0.8.1-ngsolve.r1
-cargo xtask licences
-packaging/macos/package.sh --arch x86_64
 packaging/macos/ngsolve-package.sh --arch x86_64 \
-  --app "$CARGO_TARGET_DIR/macos-package/FieldCraft.app" \
-  --output "$PWD/dist/release/FieldCraft-NGSolve-x86_64.pkg"
+  --app /path/to/FieldCraft.app --package-version 0.8.1.2 \
+  --desktop-revision 8b495f31389512c7f599ef17b5ee3a4d0cc39bc9 \
+  --output dist/FieldCraft-NGSolve-0.8.1-r2-intel.pkg
 ```
 
-Exercise a case with a known reference value and open its fields on the installed
-desktop. For a desktop with time-series support, check playback, pause and the last
-frame. Compute SHA-256 for the finished installer, compare the uploaded asset digest
-and list it in `SHA256SUMS.txt`. Fast-forward the fork's `main` to the tested source
-revision and publish the release from that commit. [macOS runtime and offline packaging](../packaging/macos/ngsolve/README.md)
+Exercise a case with a known reference value on the installed desktop. Verify the field browser, a nonunit deformation scale, and frame playback. Record the build host, runtime test host, graphics backend, and any outstanding hardware checks separately for each artifact. Compare the release asset digests with local SHA-256 checksums. Fast-forward the fork's `main` to the tested packaging commit and publish the release from that commit. [macOS runtime and offline packaging](../packaging/macos/ngsolve/README.md)
 
 ## Tangency Labs releases
 
