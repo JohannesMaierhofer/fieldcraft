@@ -18,6 +18,7 @@ the product installer which fetches the locked solver runtime from its distribut
 
 ```sh
 export CARGO_TARGET_DIR="$PWD/target"
+export FIELDCRAFT_VERSION=0.8.1-ngsolve.r1
 cargo xtask licences
 packaging/macos/package.sh --arch x86_64
 packaging/macos/ngsolve-package.sh --arch x86_64 \
