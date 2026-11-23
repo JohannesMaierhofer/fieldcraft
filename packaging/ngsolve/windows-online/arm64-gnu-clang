@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# A few build scripts invoke the GNU driver directly even for MSVC targets.
+# cargo-xwin supplies clang-cl's system include switches; preserve their directories.
+set -eu
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        /imsvc) args+=(-isystem) ;;
+        /imsvc?*) args+=(-isystem "${arg#/imsvc}") ;;
+        *) args+=("$arg") ;;
+    esac
+done
+exec /opt/llvm-tools/clang "${args[@]}"

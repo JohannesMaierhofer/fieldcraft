@@ -15,7 +15,7 @@ The first command creates the mesh. The second runs the Python script named in t
 
 ## Build and package in Linux Docker
 
-Use a Linux Docker engine (AMD64 or ARM64) and run these commands in this directory. The image installs Rust 1.99.1, Clang/LLVM, cargo-xwin and NSIS. Each container checks out the exact public desktop commit, cross-compiles the selected MSVC target and packages it with Linux NSIS. Cargo and the Microsoft SDK download caches live in a project-owned Linux volume. Allow sufficient disk space on the Docker engine. The build fetches the Microsoft CRT and SDK under their distribution terms. [cargo-xwin documentation](https://github.com/rust-cross/cargo-xwin)
+Use a Linux Docker engine (AMD64 or ARM64) and run these commands in this directory. The image installs Rust 1.99.1, Clang/LLVM, cargo-xwin and NSIS. Each container checks out the exact public desktop commit, cross-compiles the selected MSVC target and packages it with Linux NSIS. For ARM64, the container translates clang-cl system-include flags when a dependency invokes the GNU Clang driver directly. Cargo and the Microsoft SDK download caches live in a project-owned Linux volume. Allow sufficient disk space on the Docker engine. The build fetches the Microsoft CRT and SDK under their distribution terms. [cargo-xwin documentation](https://github.com/rust-cross/cargo-xwin)
 
 ```sh
 docker build -t fieldcraft-windows-r2 .

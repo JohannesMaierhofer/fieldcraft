@@ -20,4 +20,5 @@ ENV PATH="/opt/xwin/bin:/opt/llvm-tools:${PATH}" RUSTUP_TOOLCHAIN=1.99.1 \
 RUN cargo xwin --version && command -v llvm-rc && command -v lld-link && makensis -VERSION
 WORKDIR /build
 COPY setup.nsi install.ps1 INSTALL.txt package-docker.sh /opt/fieldcraft/
+COPY --chmod=0755 arm64-gnu-clang /opt/fieldcraft/arm64-tools/clang
 ENTRYPOINT ["/bin/bash", "/opt/fieldcraft/package-docker.sh"]

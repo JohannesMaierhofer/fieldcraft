@@ -38,6 +38,9 @@ case $(uname -m) in
     aarch64) host=linux/arm64 ;;
     *) echo 'The builder image supports Linux AMD64 or ARM64 hosts.' >&2; exit 1 ;;
 esac
+if [[ $arch == arm64 ]]; then
+    export PATH="/opt/fieldcraft/arm64-tools:$PATH"
+fi
 cargo xwin build --release --locked --target "$target" -p fieldcraft -p fieldcraft-cli
 cargo run --release --locked -p xtask -- licences
 
