@@ -1,7 +1,6 @@
 name: Verify direct STEP and IGES import
 on:
-  push:
-    branches: [codex/verify-step-sc]
+  workflow_dispatch:
 permissions:
   contents: read
 env:

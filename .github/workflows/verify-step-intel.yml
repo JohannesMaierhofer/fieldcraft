@@ -1,7 +1,6 @@
 name: Intel FieldCraft with direct CAD import
 on:
-  push:
-    branches: [codex/verify-step-sc]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
