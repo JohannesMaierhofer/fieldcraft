@@ -77,7 +77,9 @@ commands (files, undo, `model.info`) leave the ribbon where it is.
 When an external run is loaded, the `external` node in `ui.inspect.browser` includes a
 `groups` object. Each populated group (`fields`, `series`, `integrals`, `materials`,
 `boundaries`, `interfaces`, `loads`) contains rows with a `name` and display `detail`.
-Click a field to display its contour or a time series to open the playback controls.
+When a listed output is displayed, the node also reports `selected` with its `kind`
+(`field` or `series`) and `name`. Click a field to display its contour or a time series
+to open the playback controls.
 Integral rows show the solver value and unit. Material, boundary and interface names
 select the corresponding model set when present. Loads come from the solver manifest.
 A compact archive can keep a matching mesh and signed integrals after all its separate
