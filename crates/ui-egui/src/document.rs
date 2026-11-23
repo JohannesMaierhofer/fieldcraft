@@ -15,7 +15,7 @@ use crate::files::Prompt;
 use crate::{ModelApp, PickState, UiState, Viewport};
 
 /// The browser sections unfolded on a fresh document.
-pub(crate) const TREE_OPEN: [&str; 2] = ["mesh", "results"];
+pub(crate) const TREE_OPEN: [&str; 4] = ["mesh", "results", "external", "external/fields"];
 
 /// The tab where the document's work is: that of the first stage of its setup not yet done
 /// (an empty model's geometry, a meshed one's material, a model ready to solve its Solve), or

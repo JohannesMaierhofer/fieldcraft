@@ -74,6 +74,13 @@ commands (files, undo, `model.info`) leave the ribbon where it is.
 | `ui.render` | `path`, `width?` (default 1280), `height?` (default 800): whole pixels, each 1–8192 and at most 16 megapixels in all; `scale?` (pixels per point, 0.5–4, default the window's) | CPU render of the model with the current camera, view settings and selection highlight (no window or GPU needed). Symbols, lines and nodes are sized in points, so a render at the window's device resolution matches the window. A size out of range, or a scene over 20 million primitives, is an error |
 | `app.quit` | — | closes the window |
 
+When an external run is loaded, the `external` node in `ui.inspect.browser` includes a
+`groups` object. Each populated group (`fields`, `series`, `integrals`, `materials`,
+`boundaries`, `interfaces`, `loads`) contains rows with a `name` and display `detail`.
+Click a field to display its contour or a time series to open the playback controls.
+Integral rows show the solver value and unit. Material, boundary and interface names
+select the corresponding model set when present. Loads come from the solver manifest.
+
 ## Selection
 
 The viewport's selection belongs to the window, not the model: there is no engine command for
