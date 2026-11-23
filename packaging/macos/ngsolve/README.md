@@ -7,7 +7,7 @@ packaging/macos/ngsolve-package.sh --arch x86_64 \
   --app dist/FieldCraft.app --output dist/FieldCraft-NGSolve-intel.pkg
 ```
 
-For Apple Silicon, pass `--arch arm64` and an arm64 or universal application. `/Library/Application Support/FieldCraft/NGSolve/python/bin/python3` is the stable executable path for external analysis scripts. `-I` runs it with user site-packages and `PYTHONPATH` disabled. The installer provides NGSolve, Netgen, OCCT, NumPy, StudyPype, PyYAML, and uv. Open **File → Python Workspace** to run scripts or install additional packages into a project environment using uv. [Python Workspace](../../../docs/python-workspace.md)
+For Apple Silicon, pass `--arch arm64` and an arm64 or universal application. `/Library/Application Support/FieldCraft/NGSolve/python/bin/python3` is the stable executable path for external analysis scripts. `-I` runs it with user site-packages and `PYTHONPATH` disabled. The installer provides NGSolve, Netgen, OCCT, NumPy, and uv. In **External Analysis**, use **Open Python Workspace** to run scripts and **Settings** to install project packages. [Python Workspace](../../../docs/python-workspace.md)
 
 The bridge, selected by commit and archive digest, lives at `/Library/Application Support/FieldCraft/NGSolve/bridge`. Copy the files from `bridge/samples` to a working directory and run `fieldcraft-cli run slab.json` there to create the native model. The case combines that editable model with the Python formulation. With the installed app and its private runtime, one invocation solves the case and opens its selected electric-field component and energy in a new FieldCraft window. The run directory must be new.
 

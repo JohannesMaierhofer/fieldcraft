@@ -12,7 +12,7 @@ A Linux ARM64 installer requires compatible NGSolve and Netgen binaries. NGSolve
 
 ## First calculation
 
-Open **File → Python Workspace** to edit and run cases in the desktop. StudyPype and uv are included in the private interpreter. See [Python Workspace](../../docs/python-workspace.md) for studies, interactive execution, and project environments.
+In **External Analysis**, use **Open Python Workspace** to edit and run desktop cases. Choose **Settings** to manage project packages with the bundled uv. See [Python Workspace](../../docs/python-workspace.md) for interactive execution and project environments.
 
 Create a writable model directory. Copy the three files under `bridge/samples` into it and mesh the slab. The case command runs the selected script and opens its field and energy in a new FieldCraft window.
 
