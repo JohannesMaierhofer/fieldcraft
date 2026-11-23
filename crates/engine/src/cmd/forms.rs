@@ -2637,13 +2637,15 @@ pub const IMPORT_ORPHAN: &[Field] = &[
         .def("\"refuse\""),
 ];
 pub const EXTERNAL_CONTOUR: &[Field] = &[
-    path("path", "Nodal field", false).help("Choose a field from an external run on this mesh.").req(),
+    path("path", "Nodal field", false).help("Choose a field from an external run on this mesh."),
+    text("entry", "Catalog entry").help("Alternatively select a field by its name in the current run."),
     choice("component", "Vector component", &[("auto", "Scalar value or vector magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])
         .help("For a vector, show its magnitude or a signed Cartesian component. Choose Auto for a scalar.")
         .def("\"auto\""),
 ];
 pub const EXTERNAL_SERIES: &[Field] = &[
-    path("path", "Time series", false).help("Choose a time series for this mesh.").req(),
+    path("path", "Time series", false).help("Choose a time series for this mesh."),
+    text("entry", "Catalog entry").help("Alternatively select a time series by its name in the current run."),
     choice("component", "Vector component", &[("auto", "Scalar value or vector magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])
         .help("For a vector, show its magnitude or a signed Cartesian component. Choose Auto for a scalar.")
         .def("\"auto\""),
@@ -2653,7 +2655,10 @@ pub const EXTERNAL_PLAYBACK: &[Field] = &[
         .help("Select a recorded frame, starting at zero. Seeking pauses playback."),
     flag("playing", "Play").help("Start or pause playback of the recorded frames. Starting at the last frame replays the series."),
 ];
-pub const EXTERNAL_INTEGRALS: &[Field] = &[path("path", "Result manifest", false).help("Read integral results for the current mesh.").req()];
+pub const EXTERNAL_INTEGRALS: &[Field] = &[
+    path("path", "Result manifest", false).help("Register an external run on the current mesh.").req(),
+    flag("catalog_only", "Catalog only").help("Register the run in the browser and return counts only."),
+];
 pub const FILE_OPEN: &[Field] = &[path("path", "Model", false).help("The FieldCraft model file to open.").req()];
 const SAVE_RESULTS: Field = flag("results", "Keep results")
     .help("Keep every solved step's results in the file, so it opens showing them without solving again; off for a smaller file.")

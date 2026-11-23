@@ -155,7 +155,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Display | External Time Series — Play recorded scalar or vector fields on the original mesh | ready | `results.external.series`, `results.external.playback` |
 | Display | Mode Shapes — Mode shapes and frequencies of a frequency step | ready | `results.modes` |
 | Display | Animate — Animate the deformed shape, a mode or an explicit step's frames | ready | `results.animate`, `results.frame` |
-| Query | External Integrals — Named scalar and vector integrals from an external solver on this mesh | ready | `results.external.integrals` |
+| Query | External Integrals — External run fields, time series, integrals and named regions on this mesh | ready | `results.external.integrals` |
 | Query | Probe — Displacement, rotation, reaction and stress at nodes, element section forces, a mode shape, or an explicit field frame (or click the model) | ready | `solve.probe`, `solve.history` |
 | Query | Reactions — Reaction force and moment sums per set | ready | `results.reactions`, `results.export.csv` |
 | Query | Fluid Measurements — Saved-frame face averages, flow, heat rates and pressure drop, with CSV | ready | `results.fluid.measure` |

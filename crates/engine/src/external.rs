@@ -1,9 +1,9 @@
 //! A mesh-bound scalar contour from a separately run program. The file is session input:
 //! reloading it reproduces the display; it never masquerades as a native solved step.
-use crate::cmd::{file, file_param, forms, opt};
+use crate::cmd::{file, forms, opt};
+use crate::external_catalog::{Kind, Selection};
 use crate::requirement::Requirement;
 use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
-use fieldcraft_io::roots::Access;
 use fieldcraft_render::nodal::{FieldFile, NodalContour};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub(crate) const CONTOUR: CommandSpec = CommandSpec {
     id: "results.external.contour",
     label: "Show External Nodal Field",
-    params: r#"{"path":"pressure.field.json", "component"?: "auto|magnitude|x|y|z"} — load a fieldcraft-nodal-field/1 on this exact SI mesh; the file supplies the name, unit and scalar or vector values for each original node label. A vector defaults to its magnitude. {"show":false} removes the external contour."#,
+    params: r#"{"path":"pressure.field.json", "component"?: "auto|magnitude|x|y|z"} — load a fieldcraft-nodal-field/1 on this exact SI mesh; the file supplies the name, unit and scalar or vector values for each original node label. Use {"entry":"name"} instead of path to reopen a checked catalog row. A vector defaults to its magnitude. {"show":false} removes the external contour."#,
     form: Some(forms::EXTERNAL_CONTOUR),
     kind: CommandKind::Session,
     requires: &[Requirement::Mesh],
@@ -58,16 +58,22 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
     if opt::<bool>(p, "show")? == Some(false) {
         s.field_series = None;
         s.external_field = None;
+        s.selected_result = None;
         return Ok(json!({"shown":false}));
     }
-    let path = file_param(s, p, "path", Access::Read)?;
-    let bytes = file::read_file(&path, 64 * 1024 * 1024)?;
+    let selected = Selection::resolve(s, p, Kind::Field)?;
+    let bytes = file::read_file(&selected.path, Kind::Field.limit())?;
     let data: FieldFile = serde_json::from_slice(&bytes).map_err(|e| EngineError::Params(format!("invalid nodal field: {e}")))?;
     let component = opt::<&str>(p, "component")?.filter(|value| *value != "auto");
     let hash = fieldcraft_io::sha256_hex(&fieldcraft_io::mesh::encode(&s.model)?);
+    if data.name().len() > 120 || data.unit().len() > 48 {
+        return Err(invalid("invalid field name or unit"));
+    }
+    let (name, unit) = (data.name().to_owned(), data.unit().to_owned());
     let contour = data.prepare(s.model.nodes().keys(), &hash, component).map_err(invalid)?;
     let field = ExternalField::new(contour, s.revision());
     let reply = json!({"shown": true, "field":field.title, "min":field.min, "max":field.max, "nodes":s.model.nodes().len()});
+    selected.register(s, &name, &unit)?;
     s.results_view = None;
     s.field_series = None;
     s.external_field = Some(Arc::new(field));
