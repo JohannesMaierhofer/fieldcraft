@@ -241,6 +241,13 @@ pub fn describe(app: &mut ModelApp) -> Value {
                     && let Some(c) = app.session.external_catalog()
                 {
                     description["groups"] = external::describe(c);
+                    if let Some(active) = app.session.external_selection() {
+                        let series = app.session.external_series().is_some();
+                        let rows = if series { &c.series } else { &c.fields };
+                        if rows.iter().any(|row| row.path == active.path) {
+                            description["selected"] = json!({"kind": if series { "series" } else { "field" }, "name": active.name});
+                        }
+                    }
                 }
                 description
             })
@@ -1832,6 +1839,34 @@ pub(crate) mod tests {
     fn shown_nodes(app: &mut ModelApp) -> Vec<String> {
         let v = describe(app);
         v.as_array().into_iter().flatten().filter(|n| n["shown"] == json!(true)).filter_map(|n| n["node"].as_str().map(str::to_string)).collect()
+    }
+
+    #[test]
+    fn drawn_external_node_tracks_the_loaded_run_and_selected_field() {
+        let mut app = ModelApp::new(Session::default());
+        app.run("mesh.node.add", json!({"label":7, "xyz":[0,0,0]})).unwrap();
+        app.run("mesh.node.add", json!({"label":9, "xyz":[0,1,0]})).unwrap();
+        app.run("mesh.element.add", json!({"label":1, "kind":"rod2", "nodes":[7,9]})).unwrap();
+        // mesh.bin from these three commands, saved by the 0.8.1 CLI.
+        let hash = "b15d172a207e96ae957cc817a244c95fa30ca880935c48e441e05758c825af5a";
+        let dir = std::env::temp_dir().join(format!("fieldcraft-browser-external-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = dir.join("results.json");
+        let data = json!({"format":"fieldcraft-nodal-field/1", "mesh_sha256":hash, "name":"B", "unit":"T", "components":1, "node_ids":[7,9],"values":[1.,2.]});
+        std::fs::write(dir.join("field.json"), data.to_string()).unwrap();
+        let run = json!({"format":"fieldcraft-external-run/1", "mesh_sha256":hash, "fields":[{"name":"B","unit":"T","file":"field.json"}], "loads":["coil"]});
+        std::fs::write(&manifest, run.to_string()).unwrap();
+        app.run("results.external.integrals", json!({"path":manifest, "catalog_only":true})).unwrap();
+        app.run("results.external.contour", json!({"entry":"B"})).unwrap();
+        inspect_matches_frame(&mut app);
+        let nodes = describe(&mut app);
+        let ext = nodes.as_array().unwrap().iter().find(|node| node["node"] == "external").unwrap();
+        assert_eq!(ext["shown"], true);
+        assert_eq!(ext["selected"], json!({"kind":"field","name":"B"}));
+        assert_eq!(ext["groups"]["loads"][0]["name"], "coil");
+        app.run("mesh.node.add", json!({"label":10,"xyz":[0,2,0]})).unwrap();
+        assert!(!shown_nodes(&mut app).iter().any(|key| key == "external"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The ghost rows a drawn frame placed (`browser/add/<stage>`).
