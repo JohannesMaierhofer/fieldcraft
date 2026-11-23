@@ -8,14 +8,14 @@ Keep published tags immutable. Use the next revision for a replacement binary.
 The integration branch is `codex/ngsolve-installers`. Separate branches carry the Intel
 build, result readers and model browser for upstream review.
 
-Build the fork packages locally. For installer revision r2, build the GUI and CLI from clean desktop commit `8b495f31389512c7f599ef17b5ee3a4d0cc39bc9`. Both report `0.8.1-ngsolve.r1`. The r2 installer includes the new model browser and adjustable mesh deformation on each platform. macOS Installer receipts use `0.8.1.2`. The solver bridge is pinned to `74393901cf1b6fe70e5956003f948c9fe5eee889`, with NGSolve 6.2.2608.
+Build Windows x64, Windows ARM64, and Linux amd64 in Linux Docker containers. Build the macOS packages on Mac hardware with Apple’s packaging tools. For installer revision r2, build the GUI and CLI from clean desktop commit `8b495f31389512c7f599ef17b5ee3a4d0cc39bc9`. Both report `0.8.1-ngsolve.r1`. The r2 installer includes the new model browser and adjustable mesh deformation on each platform. macOS Installer receipts use `0.8.1.2`. The solver bridge is pinned to `74393901cf1b6fe70e5956003f948c9fe5eee889`, with NGSolve 6.2.2608.
 
 | Target | Local build recipe | Output |
 |---|---|---|
 | Intel macOS | Build the signed app in the desktop checkout with `packaging/macos/package.sh --arch x86_64`, then use the r2 package command below. | Intel PKG |
 | Apple silicon macOS | [Build and verify the native app on Apple silicon](../packaging/macos/ngsolve/build-r2-arm64.sh). | Arm64 PKG |
-| Windows x64 and ARM64 | [Build the desktop and per-user installer for each target](../packaging/ngsolve/windows-online/README.md). Windows on Arm uses the x64 solver through Windows emulation. | Two EXE installers |
-| Debian/Ubuntu amd64 | [Build the desktop, measure its ABI requirements, and assemble the package](../packaging/ngsolve/linux-online/R2.md). | amd64 DEB |
+| Windows x64 and ARM64 | [Cross-compile the desktop and build the per-user NSIS installer in Linux Docker](../packaging/ngsolve/windows-online/README.md). Windows on Arm uses the x64 solver through Windows emulation. | Two EXE installers |
+| Debian/Ubuntu amd64 | [Build the desktop in Debian Docker, measure its ABI requirements, and assemble the package](../packaging/ngsolve/linux-online/R2.md). | amd64 DEB |
 
 In the desktop checkout set `FIELDCRAFT_VERSION=0.8.1-ngsolve.r1` and `FIELDCRAFT_BUILD_SHA=8b495f31389512c7f599ef17b5ee3a4d0cc39bc9` before building the Intel app. From the r2 packaging checkout, pass its path to the packaging command.
 
