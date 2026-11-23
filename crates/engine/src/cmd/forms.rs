@@ -2793,6 +2793,16 @@ pub const EXPORT_STL: &[Field] = &[
     choice("format", "Format", &[("binary", "Binary"), ("ascii", "ASCII")]).help("Binary is compact; ASCII is readable text.").def("\"binary\""),
 ];
 
+pub const EXPORT_VOL: &[Field] = &[
+    path("path", "File", true).help("Where to write the .vol mesh. Coordinates are in meters.").req(),
+    references("materials", "Material sets", C::Set)
+        .help("Element sets defining regions. If supplied, they must cover every element.")
+        .hint("section materials or CAD bodies"),
+    references("boundaries", "Boundary sets", C::Set)
+        .help("Edge sets for 2D meshes or face sets for 3D meshes, including interior interfaces.")
+        .hint("CAD boundary names"),
+];
+
 // ---- Solving ----
 
 const STEP: Field = reference("step", "Step", C::Step).help("The step to solve; the only one when empty.").hint("the only one");

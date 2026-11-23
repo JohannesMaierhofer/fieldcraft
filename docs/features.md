@@ -6,7 +6,7 @@ Every entry is a toolbar button. **Ready** entries run an engine command or a de
 shown greyed with the roadmap milestone that brings them (ROADMAP.md). Scripts, the command line,
 the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 
-102 ready, 27 coming soon.
+103 ready, 27 coming soon.
 
 ## Geometry
 
@@ -66,6 +66,7 @@ the control channel and AI agents over MCP (docs/mcp.md) run the same commands.
 | Verify | Mark Bad Elements — Mark the elements below quality limits as a set, located and drawn in the marker colour | ready | `mesh.quality.mark` |
 | Verify | Verify Set — Quality metrics and the certified validity check of one set's elements, the worst listed | ready | `mesh.verify` |
 | Verify | Export STL — Write the mesh's outer surface (or a set's faces) as binary STL | ready | `mesh.export.stl` |
+| Verify | Export Netgen Mesh — Write a linear 2D or 3D mesh with named materials and boundaries as Netgen VOL | ready | `mesh.export.vol` |
 | Verify | Tag Geometry — Tag elements, faces, edges and nodes with the geometry they mesh | ready | `mesh.tag`, `mesh.tag.clear` |
 
 ## Properties

@@ -12,6 +12,8 @@ Choose an installer for macOS (Apple silicon or Intel), Windows (x64 or ARM64), 
 
 Open a native SolidCraft design (including files saved by SolidCraft 0.48.1) or a STEP or IGES solid, name the material and boundary sets, and generate the mesh in FieldCraft. Switch to **External Analysis** and open the **Python Workspace**. Choose **New Analysis** to create an `.analysis.json` definition linking the model, sets, and Python script. Choose **Run Analysis** to solve on the exported mesh. Run `# %%` sections and selections in the persistent console. Use **Settings** to install project packages with uv. [Python Workspace](docs/python-workspace.md)
 
+To use the same mesh in a separate NGSolve script, choose **Mesh → Verify → Export Netgen Mesh**. The exported `.vol` file preserves material and boundary names for linear 2D and 3D meshes. [Netgen VOL export and workshop examples](docs/recipes/netgen-mesh-export.md)
+
 Expand **External Analysis** in the model browser to inspect fields, time series, and integrals. FieldCraft verifies the original mesh fingerprint and node labels before displaying nodal results. For a displacement field in meters, use **Deformed → Show** and set a scale to inspect the displacement. [Native field format](docs/recipes/external-field.md)
 
 ## Upstream collaboration and credits

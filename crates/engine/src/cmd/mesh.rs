@@ -108,6 +108,16 @@ pub const EXPORT_STL: CommandSpec = CommandSpec {
     run: export_stl,
 };
 
+pub const EXPORT_VOL: CommandSpec = CommandSpec {
+    id: "mesh.export.vol",
+    label: "Export Netgen Mesh",
+    params: r#"{"path": "part.vol", "materials"?: ["steel", "air"], "boundaries"?: ["outer", "interface"]} — writes a planar XY Tri3/Quad4 or 3D Tet4/Hex8 mesh as ASCII Netgen VOL in meters. Material sets must cover all elements when supplied; otherwise use section material names, CAD body names or `default`. Boundary sets name exterior or shared edges in 2D and faces in 3D; remaining boundaries use qualified CAD names, `default` or `interface`. Replies {path, dimension, points, cells, facets, coordinate_unit}"#,
+    form: Some(super::forms::EXPORT_VOL),
+    kind: CommandKind::Session,
+    requires: &[Requirement::Mesh],
+    run: export_vol,
+};
+
 pub const DELAUNAY_POINTS: CommandSpec = CommandSpec {
     id: "mesh.delaunay.points",
     label: "Delaunay of Points",
@@ -690,6 +700,20 @@ fn export_stl(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"path": path, "triangles": triangles, "bytes": bytes.len(), "units": {"length": length}}))
 }
 
+fn export_vol(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = super::file_param(s, p, "path", fieldcraft_io::roots::Access::Write)?;
+    let file = std::path::Path::new(&path);
+    if !file.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("vol")) {
+        return Err(EngineError::invalid("path", "choose a .vol file"));
+    }
+    let materials: Vec<String> = super::opt(p, "materials")?.unwrap_or_default();
+    let boundaries: Vec<String> = super::opt(p, "boundaries")?.unwrap_or_default();
+    let summary = fieldcraft_io::vol::write(file, &s.model, &materials, &boundaries)?;
+    Ok(json!({
+        "path": path, "dimension": summary.dimension, "points": summary.points, "cells": summary.cells, "facets": summary.facets, "coordinate_unit": "m"
+    }))
+}
+
 /// The `bins` parameter of `mesh.quality` and `mesh.verify` (default 10; the report checks
 /// the range).
 fn bins_param(p: &Value) -> Result<usize> {
@@ -1064,6 +1088,31 @@ fn surface_check(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn export_vol_keeps_coordinates_in_meters_and_leaves_the_model_unchanged() {
+        let dir = crate::tests::TempDir::new();
+        let path = dir.path().join("mesh.vol");
+        let mut s = Session::default();
+        s.execute("model.units", &json!({"system": "mm-t-s-N-MPa"})).unwrap();
+        for (label, xyz) in [(1, [0, 0, 0]), (2, [100, 0, 0]), (3, [0, 100, 0]), (4, [0, 0, 100])] {
+            s.execute("mesh.node.add", &json!({"label": label, "xyz": xyz})).unwrap();
+        }
+        s.execute("mesh.element.add", &json!({"label": 1, "kind": "tet4", "nodes": [1, 2, 3, 4]})).unwrap();
+
+        let journal = s.journal.len();
+        let reply = s.execute("mesh.export.vol", &json!({"path": path})).unwrap();
+        assert_eq!(reply["coordinate_unit"], "m");
+        assert_eq!(reply["dimension"], 3);
+        assert_eq!(reply["facets"], 4);
+        assert_eq!(s.journal.len(), journal);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("points\n4\n0e0 0e0 0e0\n1e-1 0e0 0e0\n"));
+
+        let rejected = s.execute("mesh.export.vol", &json!({"path": path, "materials": ["missing"]}));
+        assert!(rejected.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
     #[test]
     fn export_stl_writes_the_skin_or_a_set() {
         let dir = std::env::temp_dir().join(format!("fieldcraft-stl-{}", std::process::id()));
