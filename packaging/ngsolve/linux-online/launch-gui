@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+seed_preferences() (
+    umask 077
+    if [ -n "${FIELDCRAFT_RECOVERY_DIR:-}" ]; then
+        folder=$(dirname -- "$FIELDCRAFT_RECOVERY_DIR")
+        # Rust Path::parent returns None for a filesystem root.
+        case "$FIELDCRAFT_RECOVERY_DIR" in *[!/]*) ;; *) exit 0 ;; esac
+    else
+        automated=${CI:-}
+        for argument do
+            if [ "$argument" = --control ]; then automated=yes; break; fi
+        done
+        if [ -n "${FIELDCRAFT_CONTROL_PORT:-}" ] && printf '%s' "$FIELDCRAFT_CONTROL_PORT" |
+            awk 'BEGIN { RS="\0" } /^[[:space:]]*[+]?[0-9]+[[:space:]]*$/ && $0 + 0 <= 65535 { ok=1 } END { exit !ok }'; then
+            automated=yes
+        fi
+        if [ -n "$automated" ]; then
+            folder=${TMPDIR:-/tmp}/fieldcraft-automation
+        elif [ -n "${XDG_DATA_HOME:-}" ]; then
+            folder=$XDG_DATA_HOME/fieldcraft
+        elif [ -n "${HOME:-}" ]; then
+            folder=$HOME/.local/share/fieldcraft
+        else
+            exit 0
+        fi
+    fi
+    prefs=$folder/prefs.json
+    [ ! -e "$prefs" ] && [ ! -L "$prefs" ] || exit 0
+    mkdir -p -- "$folder" || exit 1
+    initial=$(mktemp "$folder/.initial-prefs.XXXXXXXX") || exit 1
+    trap 'rm -f -- "$initial"' EXIT
+    printf '%s\n' '{"show_donate_button":false,"update_check":false}' > "$initial" || exit 1
+    # The single hard-link operation leaves any file created concurrently intact.
+    ln -T -- "$initial" "$prefs" 2>/dev/null || [ -e "$prefs" ] || [ -L "$prefs" ]
+)
+if [ "$(id -u)" != 0 ] && ! seed_preferences "$@"; then
+    echo 'FieldCraft could not initialize the user preference file.' >&2
+fi
+exec /opt/fieldcraft-ngsolve/fieldcraft "$@"
