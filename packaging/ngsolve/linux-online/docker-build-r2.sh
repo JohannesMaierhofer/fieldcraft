@@ -34,11 +34,14 @@ fi
 } | sort -u | git -C "$repo" pack-objects --stdout > "$stage/recipe.pack"
 git init -q "$stage/recipe"
 git -C "$stage/recipe" index-pack --stdin < "$stage/recipe.pack" >/dev/null
+echo "$packager" > "$stage/recipe/.git/shallow"
 git -C "$stage/recipe" update-ref HEAD "$packager"
 git -C "$stage/recipe" checkout "$packager" -- packaging/ngsolve
 rm -f -- "$stage/recipe.pack"
 
-docker build --platform linux/amd64 --pull --tag "$image" "$stage/recipe/packaging/ngsolve/linux-online/docker"
+mkdir "$stage/build-context"
+cp "$stage/recipe/packaging/ngsolve/linux-online/docker/Dockerfile" "$stage/build-context/"
+docker build --platform linux/amd64 --pull --tag "$image" --label "org.opencontainers.image.revision=$packager" "$stage/build-context"
 docker volume create "$volume" >/dev/null
 mounts=(--mount "type=bind,src=$stage,dst=/inputs,readonly"
         --mount "type=bind,src=$output,dst=/out" --mount "type=volume,src=$volume,dst=/work")

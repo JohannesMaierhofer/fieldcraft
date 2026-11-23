@@ -10,6 +10,8 @@ desktop=8b495f31389512c7f599ef17b5ee3a4d0cc39bc9
 loader_revision=0e3064d1bba003574f1cb3e46b0290eedc690080
 checkpoint_sha=7023134c4c9db04cb326e94cfb679adde3f2b76705729f4f16bd8e30e91a770f
 expected_compiler=59807616e1fa2540724bfbac14d7976d7e4a3860
+# Keep the release compiler active inside the desktop checkout as well as at image startup.
+export RUSTUP_TOOLCHAIN=1.95.0-x86_64-unknown-linux-gnu RUSTUP_AUTO_INSTALL=0
 . /etc/os-release
 [[ "$ID:$VERSION_CODENAME" == debian:bookworm && $(dpkg --print-architecture) == amd64 && $(uname -m) == x86_64 ]]
 [[ $(rustc -vV | sed -n 's/^host: //p') == x86_64-unknown-linux-gnu ]]
@@ -37,6 +39,7 @@ fi
 [[ $(git -C "$src" rev-parse HEAD) == "$desktop" ]]
 git -C "$src" diff --exit-code HEAD --
 cd "$src"
+[[ $(rustc -vV | sed -n 's/^commit-hash: //p') == "$expected_compiler" ]]
 cargo fetch --locked
 export CARGO_NET_OFFLINE=true
 cargo xtask licences
