@@ -38,6 +38,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libudev-dev libasound2-dev libxkbcommon-x11-dev libvulkan-dev libgtk-3-dev xvfb xauth mesa-vulkan-drivers
+      - name: Open native .sc designs from both UI entry points
+        run: |
+          cargo test --locked -p fieldcraft-ui-egui --lib files::tests::a_picked_design_meshes_from_the_ribbon_with_the_defaults -- --exact
+          cargo test --locked -p fieldcraft-ui-egui --lib control::tests::dropped_files_open_as_a_drop_does -- --exact
       - name: Run STEP GUI and embedded geometry regression tests
         run: cargo test --locked -p fieldcraft-engine -p fieldcraft-ui-egui --lib step_
       - name: Build GUI, CLI and an original SolidCraft assembly
