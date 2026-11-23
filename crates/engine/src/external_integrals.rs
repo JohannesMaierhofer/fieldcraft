@@ -20,7 +20,7 @@ pub(crate) const READ: CommandSpec = CommandSpec {
 fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let path = file_param(s, p, "path", Access::Read)?;
     let catalog_only = opt::<bool>(p, "catalog_only")?.unwrap_or(false);
-    let catalog = s.read_external_catalog(Path::new(&path))?;
+    let catalog = s.read_external_catalog(Path::new(&path), catalog_only)?;
     let reply = if catalog_only {
         json!({"registered":true, "fields":catalog.fields.len(), "series":catalog.series.len(), "integrals":catalog.integrals.len()})
     } else {

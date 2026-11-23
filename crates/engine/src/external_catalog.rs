@@ -138,31 +138,51 @@ fn utf8(path: PathBuf) -> Result<String> {
 /// `directory` is the canonical directory captured on registration, not a directory re-resolved
 /// through a new link when the user clicks the row.
 pub(crate) fn sibling(s: &Session, directory: &Path, name: &str, limit: u64) -> Result<String> {
-    if !valid_label(name, 255) || matches!(name, "." | "..") || name.contains(['/', '\\', ':']) {
-        return Err(invalid("an external catalog entry must name a single sibling file"));
-    }
-    let resolved = checked_file(s, &directory.join(name), limit)?;
+    let resolved = checked_file(s, &directory.join(sibling_name(name)?), limit)?;
     if resolved.parent() != Some(directory) {
         return Err(invalid("external catalog entry resolves outside the manifest directory"));
     }
     utf8(resolved)
 }
 
-fn rows(s: &Session, kind: Kind, folder: &Path, entries: Vec<Entry>, paths: &mut BTreeSet<String>) -> Result<Vec<CatalogField>> {
-    unique_names(entries.len(), entries.iter().map(|e| e.name.as_str()))?;
-    entries
-        .into_iter()
-        .map(|e| {
-            if !valid_label(&e.unit, 48) {
-                return Err(invalid("external result units must be nonempty and at most 48 bytes"));
-            }
-            let path = sibling(s, folder, &e.file, kind.limit())?;
-            if !paths.insert(path.clone()) {
-                return Err(invalid("multiple catalog entries refer to the same file"));
-            }
-            Ok(CatalogField { name: e.name, unit: e.unit, path })
-        })
-        .collect()
+fn sibling_name(name: &str) -> Result<&str> {
+    if !valid_label(name, 255) || matches!(name, "." | "..") || name.contains(['/', '\\', ':']) {
+        return Err(invalid("an external catalog entry must name a single sibling file"));
+    }
+    Ok(name)
+}
+
+/// Compact archives keep the integral manifest without its optional nodal files. Only the
+/// ordinary integral reader accepts such an archive. A dangling link is an existing entry.
+fn absent_sibling(folder: &Path, name: &str) -> bool {
+    let Ok(name) = sibling_name(name) else { return false };
+    let path = folder.join(name);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        !fieldcraft_io::fs::is_file(&path)
+    }
+}
+
+fn rows(s: &Session, kind: Kind, folder: &Path, entries: Vec<Entry>, paths: &mut BTreeSet<String>, archived: bool) -> Result<Vec<CatalogField>> {
+    let mut rows = Vec::new();
+    for e in entries {
+        // The underlying nodal field contract permits an empty unit for dimensionless data.
+        if e.unit.len() > 48 || e.unit.chars().any(char::is_control) {
+            return Err(invalid("external field units must be at most 48 bytes and contain no control characters"));
+        }
+        let path = if archived { utf8(folder.join(sibling_name(&e.file)?))? } else { sibling(s, folder, &e.file, kind.limit())? };
+        if !paths.insert(path.clone()) {
+            return Err(invalid("multiple catalog entries refer to the same file"));
+        }
+        if !archived {
+            rows.push(CatalogField { name: e.name, unit: e.unit, path });
+        }
+    }
+    Ok(rows)
 }
 
 impl Session {
@@ -177,7 +197,7 @@ impl Session {
         self.selected_result.as_ref()
     }
 
-    pub(crate) fn read_external_catalog(&self, path: &Path) -> Result<ExternalCatalog> {
+    pub(crate) fn read_external_catalog(&self, path: &Path, catalog_only: bool) -> Result<ExternalCatalog> {
         let path = checked_file(self, path, MANIFEST_BYTES)?;
         let bytes = file::read_file(path.to_str().ok_or_else(|| invalid("result path must be UTF-8"))?, MANIFEST_BYTES)?;
         let m: Manifest = serde_json::from_slice(&bytes).map_err(|e| EngineError::Params(format!("invalid external results: {e}")))?;
@@ -198,11 +218,15 @@ impl Session {
             unique_names(list.len(), list.iter().map(String::as_str))?;
         }
         let folder = path.parent().ok_or_else(|| invalid("missing manifest directory"))?;
+        for entries in [&m.fields, &m.series] {
+            unique_names(entries.len(), entries.iter().map(|e| e.name.as_str()))?;
+        }
+        let archived = !catalog_only && !integrals.is_empty() && m.fields.iter().chain(&m.series).all(|e| absent_sibling(folder, &e.file));
         let mut paths = BTreeSet::from([utf8(path.clone())?]);
         Ok(ExternalCatalog {
             revision: self.revision(),
-            fields: rows(self, Kind::Field, folder, m.fields, &mut paths)?,
-            series: rows(self, Kind::Series, folder, m.series, &mut paths)?,
+            fields: rows(self, Kind::Field, folder, m.fields, &mut paths, archived)?,
+            series: rows(self, Kind::Series, folder, m.series, &mut paths, archived)?,
             integrals,
             materials: m.materials,
             boundaries: m.boundaries,
@@ -343,6 +367,44 @@ mod tests {
             s.execute("results.external.integrals", &json!({"path":path,"catalog_only":true})).unwrap(),
             json!({"registered":true,"fields":1,"series":1,"integrals":0})
         );
+    }
+
+    #[test]
+    fn integral_archive_without_any_field_files_still_returns_signed_quantities() {
+        let (_dir, mut s, path, mut run) = fixture();
+        fs::remove_file(path.with_file_name("field.json")).unwrap();
+        fs::remove_file(path.with_file_name("series.json")).unwrap();
+        let q = json!({"name":"signed work","unit":"J","value":-2.5});
+        run["integrals"].as_array_mut().unwrap().push(q);
+        fs::write(&path, run.to_string()).unwrap();
+        assert_eq!(s.execute("results.external.integrals", &json!({"path":path})).unwrap()["integrals"], run["integrals"]);
+        let catalog = Arc::clone(s.external_catalog().unwrap());
+        assert!(catalog.fields.is_empty() && catalog.series.is_empty());
+        assert!(s.execute("results.external.integrals", &json!({"path":path, "catalog_only":true})).is_err());
+        run["mesh_sha256"] = json!("different mesh");
+        fs::write(&path, run.to_string()).unwrap();
+        assert!(s.execute("results.external.integrals", &json!({"path":path})).is_err());
+        assert!(Arc::ptr_eq(&catalog, s.external_catalog().unwrap()));
+    }
+
+    #[test]
+    fn dimensionless_fields_and_series_match_the_standalone_format() {
+        let (_dir, mut s, path, mut run) = fixture();
+        for file in ["field.json", "last.json", "series.json"] {
+            let source = path.with_file_name(file);
+            let mut data: Value = serde_json::from_slice(&fs::read(&source).unwrap()).unwrap();
+            data["unit"] = json!("");
+            fs::write(source, data.to_string()).unwrap();
+        }
+        run["fields"][0]["unit"] = json!("");
+        run["series"][0]["unit"] = json!("");
+        fs::write(&path, run.to_string()).unwrap();
+        s.execute("results.external.integrals", &json!({"path":path,"catalog_only":true})).unwrap();
+        assert_eq!(s.execute("results.external.contour", &json!({"entry":"B"})).unwrap()["field"], "B");
+        assert_eq!(s.execute("results.external.series", &json!({"entry":"B"})).unwrap()["frames"], 2);
+        run["integrals"][0]["unit"] = json!("");
+        fs::write(&path, run.to_string()).unwrap();
+        assert!(s.execute("results.external.integrals", &json!({"path":path})).is_err());
     }
 
     #[test]
