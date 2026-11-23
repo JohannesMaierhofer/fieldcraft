@@ -1,5 +1,6 @@
 name: Verify native external results
 on:
+  workflow_dispatch:
   push:
     branches: [codex/verify-native-series]
 permissions:
