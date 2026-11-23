@@ -343,11 +343,9 @@ pub struct Prefs {
     pub history_dock: crate::shell::HistoryDock,
     /// Show the Discord link in the title bar ([`crate::links`]).
     pub show_discord_button: bool,
-    /// Optional overrides for the installer-provided Python interpreter and bridge.
+    /// Optional override for the installer-provided Python interpreter.
     #[cfg(not(target_arch = "wasm32"))]
     pub python_interpreter: String,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub python_bridge: String,
 }
 
 /// A preference as saved, or its default when this version cannot read it (a value a newer
@@ -377,8 +375,6 @@ impl Default for Prefs {
             show_discord_button: true,
             #[cfg(not(target_arch = "wasm32"))]
             python_interpreter: String::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            python_bridge: String::new(),
         }
     }
 }

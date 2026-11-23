@@ -84,8 +84,6 @@ pub struct Snapshot {
     update_skip: String,
     #[cfg(not(target_arch = "wasm32"))]
     python_interpreter: String,
-    #[cfg(not(target_arch = "wasm32"))]
-    python_bridge: String,
 }
 
 impl Snapshot {
@@ -102,8 +100,6 @@ impl Snapshot {
             update_skip: app.prefs.update_skip.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             python_interpreter: app.prefs.python_interpreter.clone(),
-            #[cfg(not(target_arch = "wasm32"))]
-            python_bridge: app.prefs.python_bridge.clone(),
         }
     }
 
@@ -123,7 +119,7 @@ impl Snapshot {
             app.set_update_prefs(self.update_check, Some(self.update_skip.clone()));
         }
         #[cfg(not(target_arch = "wasm32"))]
-        app.set_python_paths(self.python_interpreter.clone(), self.python_bridge.clone());
+        app.set_python_interpreter(self.python_interpreter.clone());
         app.save_prefs();
     }
 }
@@ -249,8 +245,6 @@ struct Change {
     update_skip: Option<String>,
     #[cfg(not(target_arch = "wasm32"))]
     python_interpreter: Option<String>,
-    #[cfg(not(target_arch = "wasm32"))]
-    python_bridge: Option<String>,
 }
 
 /// `ui.settings`: open Settings (at `page`), change what its pages change (`set`), or press a
@@ -335,18 +329,15 @@ fn change_to(app: &mut ModelApp, c: Change) {
         app.set_update_prefs(c.update_check.unwrap_or(app.prefs.update_check), c.update_skip);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if c.python_interpreter.is_some() || c.python_bridge.is_some() {
-        app.set_python_paths(
-            c.python_interpreter.unwrap_or_else(|| app.prefs.python_interpreter.clone()),
-            c.python_bridge.unwrap_or_else(|| app.prefs.python_bridge.clone()),
-        );
+    if let Some(python) = c.python_interpreter {
+        app.set_python_interpreter(python);
     }
     app.save_prefs();
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn python_defaults(app: &mut ModelApp) {
-    app.set_python_paths(String::new(), String::new());
+    app.set_python_interpreter(String::new());
 }
 
 /// A checkbox with its hover; true when it was clicked.

@@ -5,8 +5,8 @@ use egui::{Color32, FontId, Key, Modifiers, RichText, TextEdit, TextFormat, Ui, 
 use solidcraft_ui_kit as kit;
 use solidcraft_ui_text::tr;
 
-use super::{Document, MAX_FILE, PreferredView, Selection, Workspace, append, in_project, show_result};
-use crate::ModelApp;
+use super::{Document, MAX_FILE, PreferredView, Selection, Workspace, append, in_project, is_model_file, show_result};
+use crate::{ModelApp, theme::Tokens};
 
 enum Action {
     Detach(bool),
@@ -14,17 +14,17 @@ enum Action {
     PickProject,
     SetProject,
     Open(PathBuf),
-    OpenModel(PathBuf),
     Activate(PathBuf),
     Close(usize),
     Save(usize),
     Create(bool),
-    Case,
+    NewAnalysis,
+    Analysis,
     Result(PathBuf),
     RunFile,
     RunSelection,
+    RunSection,
     Evaluate,
-    LoadMesh,
     Stop,
     Reset,
     Trace(PathBuf, usize),
@@ -91,7 +91,6 @@ fn perform(app: &mut ModelApp, action: Action) -> Result<(), String> {
         Action::PickProject => app.pick_python_project(),
         Action::SetProject => workspace.set_project(&PathBuf::from(&workspace.folder))?,
         Action::Open(path) => workspace.open_file(&path)?,
-        Action::OpenModel(path) => app.open_path(super::path_string(&path)?),
         Action::Activate(path) => workspace.activate(path),
         Action::Close(index) => {
             if workspace.tabs.get(index).is_some_and(Document::dirty) {
@@ -107,16 +106,17 @@ fn perform(app: &mut ModelApp, action: Action) -> Result<(), String> {
         }
         Action::Save(index) => workspace.save(index)?,
         Action::Create(folder) => workspace.create(folder)?,
-        Action::Case => workspace.run_case(&app.session)?,
+        Action::NewAnalysis => app.new_python_analysis()?,
+        Action::Analysis => app.run_python_analysis(None)?,
         Action::Result(path) => show_result(app, &path, &PreferredView::default())?,
         Action::RunFile => workspace.run_file()?,
         Action::RunSelection => workspace.run_selection()?,
+        Action::RunSection => workspace.run_section()?,
         Action::Evaluate => {
             let input = workspace.console_input.clone();
             workspace.console_request(&input, "<console>", 1, None)?;
             workspace.console_input.clear();
         }
-        Action::LoadMesh => workspace.use_run_in_console()?,
         Action::Stop => workspace.stop_job(),
         Action::Reset => {
             workspace.console = None;
@@ -135,22 +135,17 @@ pub(crate) fn settings_page(ui: &mut Ui, app: &mut ModelApp) {
         kit::settings_heading(ui, tr("settings.python"), tr("settings.python_note"));
         kit::settings_section(ui, "python-runtime", tr("settings.python_runtime"), |ui| {
             let mut python = app.prefs.python_interpreter.clone();
-            let mut bridge = app.prefs.python_bridge.clone();
             let automatic = tr("settings.python_automatic");
             let python_changed = kit::row(ui, tr("settings.python_interpreter"), |ui| kit::text_field(ui, &mut python, automatic).1);
-            let bridge_changed = kit::row(ui, tr("settings.python_bridge"), |ui| kit::text_field(ui, &mut bridge, automatic).1);
-            if python_changed || bridge_changed {
-                app.set_python_paths(python, bridge);
+            if python_changed {
+                app.set_python_interpreter(python);
             }
             let workspace = &app.python_workspace;
             if let Some(runtime) = &workspace.runtime {
                 let interpreter = workspace.project.as_deref().map_or_else(|| PathBuf::from(&runtime.python), |root| runtime.python(root));
-                let paths =
-                    [(tr("settings.python_active"), interpreter.as_path()), (tr("settings.python_active_bridge"), Path::new(&runtime.bridge))];
-                for (label, path) in paths {
-                    let value = if path.as_os_str().is_empty() { tr("settings.python_missing").into() } else { path.display().to_string() };
-                    ui.add(egui::Label::new(format!("{label}: {value}")).wrap());
-                }
+                let label = tr("settings.python_active");
+                let value = if interpreter.as_os_str().is_empty() { tr("settings.python_missing").into() } else { interpreter.display().to_string() };
+                ui.add(egui::Label::new(format!("{label}: {value}")).wrap());
             }
         });
         kit::settings_section(ui, "python-packages", tr("settings.python_packages"), |ui| {
@@ -202,7 +197,7 @@ impl Workspace {
         ui.separator();
         ui.horizontal_wrapped(|ui| {
             ui.label("Project");
-            let response = ui.add(TextEdit::singleline(&mut self.folder).desired_width((ui.available_width() - 166.0).max(115.0)));
+            let response = ui.add(TextEdit::singleline(&mut self.folder).desired_width((ui.available_width() - 204.0).max(115.0)));
             if ui.button("Browse…").clicked() {
                 *action = Some(Action::PickProject);
             }
@@ -233,12 +228,16 @@ impl Workspace {
     fn run_bar(&mut self, ui: &mut Ui, action: &mut Option<Action>) {
         ui.horizontal_wrapped(|ui| {
             let idle = self.job.is_none();
-            let case = self.case.as_deref().map_or("Open a .case.json file", filename);
-            if ui.add_enabled(idle && self.case.is_some(), egui::Button::new("Run Case")).on_hover_text(case).clicked() {
-                *action = Some(Action::Case);
+            let analysis = self.analysis.as_deref().map_or("Open an analysis definition", filename);
+            if editor_button(ui, "Run Analysis", kit::Button::Primary, idle && self.analysis.is_some()).on_hover_text(analysis).clicked() {
+                *action = Some(Action::Analysis);
             }
-            ui.checkbox(&mut self.use_open_model, "Use Open Model");
-            if ui.add_enabled(!idle, egui::Button::new("Stop Job")).clicked() {
+            if editor_button(ui, "New Analysis", kit::Button::Normal, idle).clicked() {
+                *action = Some(Action::NewAnalysis);
+            }
+            kit::checkbox(ui, "Use Open Model", &mut self.use_open_model)
+                .on_hover_text("Run on a snapshot of the current model, including unsaved edits");
+            if !idle && editor_button(ui, "Stop Job", kit::Button::Normal, true).clicked() {
                 *action = Some(Action::Stop);
             }
             if !idle {
@@ -266,47 +265,65 @@ impl Workspace {
 
     fn editor(&mut self, ui: &mut Ui, height: f32, action: &mut Option<Action>) {
         ui.vertical(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                for tab in &self.tabs {
-                    let label = format!("{}{}", filename(&tab.path), if tab.dirty() { " *" } else { "" });
-                    if ui.selectable_label(self.active.as_ref() == Some(&tab.path), label).on_hover_text(tab.path.display().to_string()).clicked() {
-                        *action = Some(Action::Activate(tab.path.clone()));
-                    }
-                }
-            });
             let Some(index) = self.active_tab() else {
-                ui.label("Open a Python script or case from Files.");
+                ui.label("Open a Python script or analysis definition from Files.");
                 return;
             };
+            let theme = Tokens::get(ui.visuals().dark_mode);
+            egui::Frame::new().fill(theme.panel_header).inner_margin(egui::Margin::same(4)).corner_radius(5).show(ui, |ui| {
+                ui.set_min_width((ui.available_width() - 8.0).max(0.0));
+                ui.horizontal_wrapped(|ui| {
+                    for tab in &self.tabs {
+                        let label = format!("{}{}", filename(&tab.path), if tab.dirty() { " *" } else { "" });
+                        let style = if self.active.as_ref() == Some(&tab.path) { kit::Button::SmallSelected } else { kit::Button::Ghost };
+                        if kit::button(ui, label, style).on_hover_text(tab.path.display().to_string()).clicked() {
+                            *action = Some(Action::Activate(tab.path.clone()));
+                        }
+                    }
+                });
+            });
             let Some(tab) = self.tabs.get_mut(index) else { return };
             let id = egui::Id::unique(("fc_python_editor", &tab.path));
             let python = tab.path.extension().and_then(|ext| ext.to_str()) == Some("py");
             let selected = self.selection.as_ref().is_some_and(|selection| selection.start != selection.end);
             let console_idle = self.console.as_ref().is_none_or(|console| !console.busy);
             let has_focus = ui.memory(|memory| memory.has_focus(id));
-            let mut height = height - 51.0;
+            let mut height = height - 60.0;
             ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(tab.dirty(), egui::Button::new("Save")).clicked()
+                if editor_button(ui, "Save", kit::Button::Normal, tab.dirty()).clicked()
                     || has_focus && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::S))
                 {
                     *action = Some(Action::Save(index));
                 }
-                if ui.button("Close Tab").clicked() {
+                if kit::button(ui, "Close Tab", kit::Button::Ghost).clicked() {
                     *action = Some(Action::Close(index));
                 }
-                if tab.dirty() && ui.button("Discard Edits").clicked() {
+                if tab.dirty() && kit::button(ui, "Discard Edits", kit::Button::Ghost).clicked() {
                     tab.text.clone_from(&tab.saved);
                     self.selection = None;
                 }
-                if ui.add_enabled(python && self.job.is_none(), egui::Button::new("Run Python File")).clicked() {
+                if editor_button(ui, "Run Python File", kit::Button::Normal, python && self.job.is_none()).clicked() {
                     *action = Some(Action::RunFile);
                 }
-                if ui.add_enabled(python && selected && console_idle, egui::Button::new("Run Selection")).on_hover_text("Ctrl/Cmd+Enter").clicked()
-                    || python && selected && console_idle && has_focus && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter))
+                if editor_button(ui, "Run Selection", kit::Button::Normal, python && selected && console_idle)
+                    .on_hover_text("Ctrl/Cmd+Shift+Enter")
+                    .clicked()
+                    || python
+                        && selected
+                        && console_idle
+                        && has_focus
+                        && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter))
                 {
                     *action = Some(Action::RunSelection);
                 }
-                if filename(&tab.path) == "results.json" && ui.button("Show Results").clicked() {
+                if editor_button(ui, "Run Section", kit::Button::Normal, python && console_idle)
+                    .on_hover_text("Run the current # %% section in Console (Ctrl/Cmd+Enter)")
+                    .clicked()
+                    || python && console_idle && has_focus && ui.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter))
+                {
+                    *action = Some(Action::RunSection);
+                }
+                if filename(&tab.path) == "results.json" && kit::button(ui, "Show Results", kit::Button::Normal).clicked() {
                     *action = Some(Action::Result(tab.path.clone()));
                 }
             });
@@ -314,35 +331,44 @@ impl Workspace {
                 height -= 112.0;
             }
             let editor_width = ui.available_width();
-            egui::ScrollArea::both().id_salt(("fc_python_scroll", &tab.path)).max_height(height.max(75.0)).show(ui, |ui| {
-                let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, _: f32| highlight(ui, buffer.as_str(), python);
-                let rows = tab.text.lines().count().clamp(7, 5000);
-                if let Some(line) = self.jump_line.take() {
-                    let mut state = TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
-                    let offset: usize = tab.text.split_inclusive('\n').take(line.saturating_sub(1)).map(|row| row.chars().count()).sum();
-                    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(offset))));
-                    state.store(ui.ctx(), id);
-                    ui.memory_mut(|memory| memory.request_focus(id));
-                }
-                ui.horizontal_top(|ui| {
-                    let font = FontId::monospace(13.0);
-                    let numbers = (1..=rows).map(|row| format!("{row:>4}\n")).collect::<String>();
-                    ui.add_space(2.0);
-                    ui.label(RichText::new(numbers).font(font).weak());
-                    let editor = TextEdit::multiline(&mut tab.text)
-                        .id(id)
-                        .code_editor()
-                        .desired_rows(rows)
-                        .desired_width((editor_width - 60.0).max(160.0))
-                        .char_limit(MAX_FILE as usize)
-                        .layouter(&mut layouter)
-                        .show(ui);
-                    if let Some(range) = editor.cursor_range {
-                        let [start, end] = range.sorted_cursors();
-                        self.selection = Some(Selection { start: start.index.into(), end: end.index.into() });
-                    }
+            egui::Frame::new()
+                .fill(theme.field)
+                .stroke(egui::Stroke::new(1.0, theme.border))
+                .corner_radius(5)
+                .inner_margin(egui::Margin::same(7))
+                .show(ui, |ui| {
+                    egui::ScrollArea::both().id_salt(("fc_python_scroll", &tab.path)).max_height(height.max(75.0)).show(ui, |ui| {
+                        let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, _: f32| highlight(ui, buffer.as_str(), python);
+                        let rows = tab.text.lines().count().clamp(7, 5000);
+                        if let Some(line) = self.jump_line.take() {
+                            let mut state = TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                            let offset: usize = tab.text.split_inclusive('\n').take(line.saturating_sub(1)).map(|row| row.chars().count()).sum();
+                            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(offset))));
+                            state.store(ui.ctx(), id);
+                            ui.memory_mut(|memory| memory.request_focus(id));
+                        }
+                        ui.horizontal_top(|ui| {
+                            let font = FontId::monospace(13.0);
+                            let numbers = (1..=rows).map(|row| format!("{row:>4}\n")).collect::<String>();
+                            ui.add_space(2.0);
+                            ui.label(RichText::new(numbers).font(font).color(theme.text_dim));
+                            let editor = TextEdit::multiline(&mut tab.text)
+                                .id(id)
+                                .code_editor()
+                                .frame(egui::Frame::NONE)
+                                .desired_rows(rows)
+                                .desired_width((editor_width - 60.0).max(160.0))
+                                .char_limit(MAX_FILE as usize)
+                                .layouter(&mut layouter)
+                                .show(ui);
+                            if let Some(range) = editor.cursor_range {
+                                let [start, end] = range.sorted_cursors();
+                                self.selection =
+                                    Some(Selection { start: start.index.into(), end: end.index.into(), caret: range.primary.index.into() });
+                            }
+                        });
+                    });
                 });
-            });
         });
     }
 
@@ -352,9 +378,6 @@ impl Workspace {
             ui.heading("Console");
             if ui.add_enabled(self.console.is_some(), egui::Button::new("Reset Console")).clicked() {
                 *action = Some(Action::Reset);
-            }
-            if ui.add_enabled(!busy && self.last_result.is_some(), egui::Button::new("Load Last Case Mesh")).clicked() {
-                *action = Some(Action::LoadMesh);
             }
             if busy {
                 ui.spinner();
@@ -388,6 +411,10 @@ impl Workspace {
     }
 }
 
+fn editor_button(ui: &mut Ui, label: &str, kind: kit::Button, enabled: bool) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| kit::button(ui, label, kind)).inner
+}
+
 fn filename(path: &Path) -> &str {
     path.file_name().and_then(|name| name.to_str()).unwrap_or("Untitled")
 }
@@ -404,7 +431,7 @@ fn tree(ui: &mut Ui, dir: &Path, active: Option<&Path>, depth: usize, budget: &m
             let kind = item.file_type().ok()?;
             let path = item.path();
             let name = filename(&path);
-            if name.starts_with('.') || name == "__pycache__" || kind.is_symlink() {
+            if name.starts_with('.') || name == "__pycache__" || kind.is_symlink() || (kind.is_file() && is_model_file(&path)) {
                 return None;
             }
             Some((!kind.is_dir(), path))
@@ -419,10 +446,9 @@ fn tree(ui: &mut Ui, dir: &Path, active: Option<&Path>, depth: usize, budget: &m
         let name = filename(&path);
         if file {
             let extension = path.extension().and_then(|text| text.to_str()).unwrap_or_default();
-            let is_model = extension == "fieldcraft";
             let is_text = matches!(extension, "py" | "json" | "yaml" | "yml" | "toml" | "csv" | "txt" | "md" | "log" | "lock");
-            if ui.add_enabled(is_model || is_text, egui::Button::selectable(active == Some(&path), name)).clicked() {
-                *action = Some(if is_model { Action::OpenModel(path) } else { Action::Open(path) });
+            if ui.add_enabled(is_text, egui::Button::selectable(active == Some(&path), name)).clicked() {
+                *action = Some(Action::Open(path));
             }
         } else {
             egui::CollapsingHeader::new(name).id_salt(&path).show(ui, |ui| tree(ui, &path, active, depth + 1, budget, action));
@@ -438,17 +464,19 @@ fn frame(line: &str) -> Option<(&str, usize)> {
 }
 
 fn highlight(ui: &Ui, source: &str, python: bool) -> std::sync::Arc<egui::Galley> {
-    let default = ui.visuals().text_color();
+    let theme = Tokens::get(ui.visuals().dark_mode);
+    let default = theme.text;
     let font = FontId::monospace(13.0);
     let mut job = egui::text::LayoutJob::default();
     let mut segment = |text, color| job.append(text, 0.0, TextFormat::simple(font.clone(), color));
     if python && source.len() <= 64 * 1024 {
-        let (keyword, literal, comment) = if ui.visuals().dark_mode {
-            (Color32::from_rgb(145, 186, 255), Color32::from_rgb(207, 183, 134), Color32::from_gray(150))
-        } else {
-            (Color32::from_rgb(36, 76, 158), Color32::from_rgb(132, 70, 32), Color32::from_gray(102))
-        };
+        let literal = if ui.visuals().dark_mode { Color32::from_rgb(220, 187, 131) } else { Color32::from_rgb(129, 68, 32) };
+        let (keyword, comment) = (theme.accent_ink, theme.text_dim);
         for line in source.split_inclusive('\n') {
+            if line.trim_start().strip_prefix('#').is_some_and(|text| text.trim_start().starts_with("%%")) {
+                segment(line, keyword);
+                continue;
+            }
             let mut indices = line.char_indices().peekable();
             while let Some((start, ch)) = indices.next() {
                 let color = match ch {

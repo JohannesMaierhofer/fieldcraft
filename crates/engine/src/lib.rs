@@ -33,6 +33,8 @@ mod external_integrals;
 pub mod external_series;
 pub mod history;
 pub mod linearise;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ngsolve;
 pub mod path;
 pub mod progress;
 pub mod requirement;

@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use fieldcraft_engine::Session;
-use serde_json::{Value, json};
+use fieldcraft_engine::{Session, ngsolve};
+use serde_json::json;
 
 use crate::{ModelApp, inbox};
 use process::Process;
@@ -35,7 +35,7 @@ pub(crate) struct Workspace {
     runtime: Option<Runtime>,
     tabs: Vec<Document>,
     active: Option<PathBuf>,
-    case: Option<PathBuf>,
+    analysis: Option<PathBuf>,
     last_result: Option<PathBuf>,
     use_open_model: bool,
     new_path: String,
@@ -65,6 +65,7 @@ impl Document {
 struct Selection {
     start: usize,
     end: usize,
+    caret: usize,
 }
 
 struct Console {
@@ -76,8 +77,14 @@ struct Console {
 struct Launch {
     command: std::process::Command,
     log: PathBuf,
-    result: Option<RunResult>,
+    analysis: Option<Box<AnalysisJob>>,
     name: &'static str,
+}
+
+struct AnalysisJob {
+    prepared: ngsolve::Prepared,
+    interpreter: PathBuf,
+    view: PreferredView,
 }
 
 struct RunResult {
@@ -85,7 +92,7 @@ struct RunResult {
     view: PreferredView,
 }
 
-#[derive(Default, serde::Deserialize)]
+#[derive(Default)]
 struct PreferredView {
     field: Option<String>,
     series: Option<String>,
@@ -94,7 +101,8 @@ struct PreferredView {
 
 enum Job {
     Preparing(inbox::Inbox<Result<Launch, String>>),
-    Running { process: Process, result: Option<RunResult>, name: &'static str },
+    Running { process: Process, analysis: Option<Box<AnalysisJob>>, name: &'static str, started: std::time::Instant },
+    Verifying(inbox::Inbox<Result<(ngsolve::Verified, PreferredView), String>>),
 }
 
 fn read_text(path: &Path) -> Result<String, String> {
@@ -133,8 +141,8 @@ fn append(log: &mut VecDeque<String>, line: String) {
 }
 
 impl Workspace {
-    fn prepare(&mut self, model: Option<&str>, python: &str, bridge: &str) {
-        self.runtime.get_or_insert_with(|| Runtime::with_overrides(python, bridge));
+    fn prepare(&mut self, model: Option<&str>, python: &str) {
+        self.runtime.get_or_insert_with(|| Runtime::with_override(python));
         if self.project.is_none()
             && let Some(parent) = model.and_then(|path| Path::new(path).parent()).filter(|path| path.is_absolute())
         {
@@ -156,7 +164,7 @@ impl Workspace {
             self.tabs.clear();
             self.active = None;
             self.selection = None;
-            self.case = None;
+            self.analysis = None;
             self.last_result = None;
             self.use_open_model = false;
             self.environment_status = None;
@@ -195,6 +203,9 @@ impl Workspace {
 
     fn open_file(&mut self, path: &Path) -> Result<(), String> {
         let path = in_project(self.root()?, path)?;
+        if is_model_file(&path) {
+            return Err("Open FieldCraft models from the File menu".into());
+        }
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.path == path) {
             if !tab.dirty() {
                 tab.saved = read_text(&path)?;
@@ -212,8 +223,8 @@ impl Workspace {
     }
 
     fn activate(&mut self, path: PathBuf) {
-        if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(".case.json")) {
-            self.case = Some(path.clone());
+        if ngsolve::is_analysis_file(&path) {
+            self.analysis = Some(path.clone());
         }
         self.selection = None;
         self.active = Some(path);
@@ -261,6 +272,9 @@ impl Workspace {
         if folder {
             fs::create_dir(path).map_err(|error| error.to_string())?;
         } else {
+            if is_model_file(&path) {
+                return Err("Use FieldCraft to create model files".into());
+            }
             OpenOptions::new().write(true).create_new(true).open(&path).map_err(|error| error.to_string())?;
             self.open_file(&path)?;
         }
@@ -268,10 +282,65 @@ impl Workspace {
         Ok(())
     }
 
+    fn new_analysis(&mut self, model: Option<&Path>, dimension: u8) -> Result<(), String> {
+        if self.tabs.len() >= MAX_TABS {
+            return Err("Close an editor tab before opening another file".into());
+        }
+        let root = self.root()?;
+        let model = model
+            .filter(|path| is_model_file(path))
+            .and_then(|path| path.canonicalize().ok())
+            .and_then(|path| path.strip_prefix(root).ok().map(Path::to_path_buf))
+            .unwrap_or_default();
+        let script = self
+            .active
+            .as_deref()
+            .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("py")))
+            .and_then(|path| path.strip_prefix(root).ok())
+            .unwrap_or(Path::new(""));
+        let stem: String = model.file_stem().and_then(|name| name.to_str()).unwrap_or("new").chars().take(40).collect();
+        let mut template = serde_json::to_string_pretty(&json!({
+            "format": ngsolve::ANALYSIS_FORMAT,
+            "model": model,
+            "script": script,
+            "dimension": dimension,
+            "materials": [],
+            "boundaries": [],
+            "interfaces": [],
+            "field": null,
+            "series": null,
+            "component": null,
+        }))
+        .map_err(|error| error.to_string())?;
+        template.push('\n');
+        for index in 1..=100 {
+            let name = if index == 1 { format!("{stem}.analysis.json") } else { format!("{stem}-{index}.analysis.json") };
+            let path = root.join(name);
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    if let Err(error) = file.write_all(template.as_bytes()) {
+                        drop(file);
+                        let _ = fs::remove_file(&path);
+                        return Err(error.to_string());
+                    }
+                    return self.open_file(&path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err("Could not find an unused analysis file name".into())
+    }
+
     fn console_request(&mut self, code: &str, filename: &str, line: usize, document: Option<&str>) -> Result<(), String> {
         if code.trim().is_empty() || code.len() as u64 > MAX_FILE {
             return Err("Select up to 1 MiB of Python code or enter a console command".into());
         }
+        let preview: String = code.lines().next().unwrap_or_default().chars().take(240).collect();
+        self.send_console_request(json!({"code":code,"file":filename,"line":line,"document":document}), &preview)
+    }
+
+    fn send_console_request(&mut self, request: serde_json::Value, preview: &str) -> Result<(), String> {
         if self.console.as_ref().is_some_and(|console| console.busy) {
             return Err("The Python console is running code".into());
         }
@@ -280,15 +349,13 @@ impl Workspace {
             let mut command = self.runtime()?.command(root, false)?;
             let dir = run_folder(root, "console")?;
             let completion = format!("fieldcraft-console-complete-{}", RUN_ID.fetch_add(1, Ordering::Relaxed));
-            command.args(["-u", "-c", runtime::CONSOLE, &completion]);
+            command.args(["-u", "-c", &ngsolve::with_helpers(runtime::CONSOLE), &completion]);
             let process = Process::spawn(&mut command, &dir.join("console.log"), true).map_err(|error| error.to_string())?;
             self.console = Some(Console { process, completion, busy: false });
         }
         let console = self.console.as_mut().ok_or("Could not start the Python console")?;
-        let request = json!({"code":code,"file":filename,"line":line,"document":document});
         console.process.send(serde_json::to_vec(&request).map_err(|error| error.to_string())?)?;
         console.busy = true;
-        let preview: String = code.lines().next().unwrap_or_default().chars().take(240).collect();
         append(&mut self.log, format!(">>> {preview}"));
         Ok(())
     }
@@ -305,15 +372,16 @@ impl Workspace {
         self.console_request(&code, &file, line, Some(&source))
     }
 
-    fn use_run_in_console(&mut self) -> Result<(), String> {
-        let path = self.last_result.as_ref().and_then(|file| file.parent()).ok_or("Run a case first")?;
-        let mesh = serde_json::to_string(path_string(&path.join("mesh.npz"))?).map_err(|error| error.to_string())?;
-        self.console_request(
-            &format!("from fc_results import load_mesh\nmesh_path = {mesh}\nmesh, data = load_mesh(mesh_path)"),
-            "<console>",
-            1,
-            None,
-        )
+    fn run_section(&mut self) -> Result<(), String> {
+        let tab = self.active_tab().and_then(|index| self.tabs.get(index)).ok_or("Open a Python file first")?;
+        if tab.path.extension().and_then(|ext| ext.to_str()) != Some("py") || tab.text.len() as u64 > MAX_FILE {
+            return Err("Run Section needs a Python file up to 1 MiB".into());
+        }
+        let caret = self.selection.as_ref().map_or(0, |selection| selection.caret);
+        let line = tab.text.chars().take(caret).filter(|ch| *ch == '\n').count() + 1;
+        let file = path_string(&tab.path)?;
+        let request = json!({"section":line,"file":file,"document":tab.text});
+        self.send_console_request(request, &format!("Run section at {}:{line}", tab.path.file_name().unwrap_or_default().to_string_lossy()))
     }
 
     fn idle(&self) -> Result<(), String> {
@@ -323,48 +391,40 @@ impl Workspace {
     fn launch(&mut self, mut launch: Launch) -> Result<(), String> {
         let process = Process::spawn(&mut launch.command, &launch.log, false).map_err(|error| error.to_string())?;
         append(&mut self.log, format!("{} started", launch.name));
-        self.job = Some(Job::Running { process, result: launch.result, name: launch.name });
+        self.job = Some(Job::Running { process, analysis: launch.analysis, name: launch.name, started: std::time::Instant::now() });
         Ok(())
     }
 
-    fn run_case(&mut self, session: &Session) -> Result<(), String> {
+    fn run_analysis(&mut self, session: &Session) -> Result<(), String> {
         self.idle()?;
         if self.use_open_model && session.model.elements().is_empty() {
-            return Err("The open model needs a mesh before running a case".into());
+            return Err("The open model needs a mesh before running an analysis".into());
         }
         self.save_all()?;
         let root = self.root()?;
-        let runtime = self.runtime()?;
-        let case = in_project(root, self.case.as_deref().ok_or("Open a .case.json file first")?)?;
-        let definition: Value = serde_json::from_str(&read_text(&case)?).map_err(|error| error.to_string())?;
-        let view = serde_json::from_value(definition.clone()).map_err(|error| error.to_string())?;
-        let mut command = runtime.command(root, false)?;
-        let bridge = runtime.bridge()?;
-        let dir = run_folder(root, "case")?;
-        let out = dir.join("result");
-        let snapshot = dir.join("model.fieldcraft");
-        let case = if self.use_open_model { snapshot_case(definition, &case, &snapshot)? } else { case };
-        command.args(["-u", "-c", runtime::RUN_CASE]).arg(case).arg(&out).arg(bridge);
-        let launch =
-            Launch { command, log: dir.join("case.log"), result: Some(RunResult { path: out.join("results.json"), view }), name: "NGSolve case" };
-        if !self.use_open_model {
-            return self.launch(launch);
-        }
-        let mut model = session.clone();
+        let analysis = in_project(root, self.analysis.as_deref().ok_or("Open a .analysis.json file first")?)?;
+        let analysis = ngsolve::Analysis::read(&analysis).map_err(|error| error.to_string())?;
+        let view = PreferredView { field: analysis.field.clone(), series: analysis.series.clone(), component: analysis.component.clone() };
+        let interpreter = self.runtime()?.python(root);
+        let dir = run_folder(root, "analysis")?;
+        let model = self.use_open_model.then(|| session.clone());
         let (send, receive) = inbox::channel();
         std::thread::Builder::new()
-            .name("fieldcraft-python-snapshot".into())
+            .name("fieldcraft-ngsolve-prepare".into())
             .spawn(move || {
-                let result = path_string(&snapshot).and_then(|path| {
-                    #[allow(clippy::disallowed_methods, reason = "the snapshot worker saves its own model copy")]
-                    let saved = model.execute("file.save_as", &json!({"path":path,"results":false,"geometry":"refer"}));
-                    saved.map_err(|error| error.to_string())?;
-                    Ok(launch)
-                });
+                let snapshot = dir.join("model.fieldcraft");
+                let result = analysis
+                    .prepare(&dir.join("result"), model.map(|model| (model, snapshot.as_path())))
+                    .and_then(|prepared| {
+                        let command = prepared.command(&interpreter)?;
+                        let analysis = Box::new(AnalysisJob { prepared, interpreter, view });
+                        Ok(Launch { command, log: dir.join("analysis.log"), analysis: Some(analysis), name: "NGSolve analysis" })
+                    })
+                    .map_err(|error| error.to_string());
                 let _ = send.send(result);
             })
             .map_err(|error| error.to_string())?;
-        append(&mut self.log, "Saving the open model for this case".into());
+        append(&mut self.log, "Preparing the FieldCraft mesh for NGSolve".into());
         self.job = Some(Job::Preparing(receive));
         Ok(())
     }
@@ -378,9 +438,9 @@ impl Workspace {
             return Err("Open a Python file first".into());
         }
         let mut command = self.runtime()?.command(root, false)?;
-        command.arg("-u").arg(file);
+        command.args(["-u", "-c", &ngsolve::with_helpers(runtime::RUN_FILE)]).arg(file);
         let dir = run_folder(root, "script")?;
-        self.launch(Launch { command, log: dir.join("script.log"), result: None, name: "Python script" })
+        self.launch(Launch { command, log: dir.join("script.log"), analysis: None, name: "Python script" })
     }
 
     fn uv(&mut self, add: bool) -> Result<(), String> {
@@ -408,7 +468,7 @@ impl Workspace {
             command.args(["--", requirement]);
         }
         let dir = run_folder(root, "environment")?;
-        self.launch(Launch { command, log: dir.join("uv.log"), result: None, name: ENVIRONMENT_JOB })?;
+        self.launch(Launch { command, log: dir.join("uv.log"), analysis: None, name: ENVIRONMENT_JOB })?;
         self.console = None;
         self.environment_status = Some(Ok("Updating the project environment…".into()));
         Ok(())
@@ -454,10 +514,53 @@ impl Workspace {
                     None
                 }
             },
-            Job::Running { process, result, name } => match process.poll(|line| append(&mut self.log, line)) {
+            Job::Verifying(receive) => match receive.try_recv() {
+                Err(TryRecvError::Empty) => None,
+                result => {
+                    self.job = None;
+                    match result
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result)
+                        .and_then(|(run, view)| run.publish().map(|path| RunResult { path, view }).map_err(|error| error.to_string()))
+                    {
+                        Ok(result) => {
+                            self.last_result = Some(result.path.clone());
+                            append(&mut self.log, "NGSolve analysis finished".into());
+                            Some(result)
+                        }
+                        Err(error) => {
+                            self.error = Some(error);
+                            None
+                        }
+                    }
+                }
+            },
+            Job::Running { process, analysis, name, started } => match process.poll(|line| append(&mut self.log, line)) {
+                Ok(None) if analysis.is_some() && started.elapsed() >= ngsolve::SOLVER_TIMEOUT => {
+                    self.job = None;
+                    self.error = Some("NGSolve exceeded the one-hour analysis time limit".into());
+                    None
+                }
                 Ok(None) => None,
                 Ok(Some(status)) => {
-                    let result = if status.success() { result.take() } else { None };
+                    if status.success()
+                        && let Some(analysis) = analysis.take()
+                    {
+                        let (send, receive) = inbox::channel();
+                        let verify = std::thread::Builder::new().name("fieldcraft-ngsolve-verify".into()).spawn(move || {
+                            let AnalysisJob { prepared, interpreter, view } = *analysis;
+                            let result = prepared.verify(&interpreter).map(|verified| (verified, view)).map_err(|error| error.to_string());
+                            let _ = send.send(result);
+                        });
+                        self.job = match verify {
+                            Ok(_) => Some(Job::Verifying(receive)),
+                            Err(error) => {
+                                self.error = Some(error.to_string());
+                                None
+                            }
+                        };
+                        return None;
+                    }
                     append(&mut self.log, format!("{name} {}", if status.success() { "finished".into() } else { format!("exited: {status}") }));
                     if *name == ENVIRONMENT_JOB {
                         self.environment_status = Some(if status.success() {
@@ -467,10 +570,7 @@ impl Workspace {
                         });
                     }
                     self.job = None;
-                    if let Some(result) = &result {
-                        self.last_result = Some(result.path.clone());
-                    }
-                    result
+                    None
                 }
                 Err(error) => {
                     if *name == ENVIRONMENT_JOB {
@@ -485,9 +585,31 @@ impl Workspace {
     }
 }
 
+fn is_model_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("fieldcraft"))
+}
+
 impl ModelApp {
+    pub(crate) fn new_python_analysis(&mut self) -> Result<(), String> {
+        self.open_python_workspace();
+        let elements = self.session.model.elements();
+        let planar = !elements.is_empty() && elements.values().all(|element| element.kind == fieldcraft_model::ElementKind::Tri3);
+        self.python_workspace.new_analysis(self.session.path.as_deref().map(Path::new), if planar { 2 } else { 3 })
+    }
+
+    pub(crate) fn run_python_analysis(&mut self, path: Option<&Path>) -> Result<(), String> {
+        if let Some(path) = path {
+            if !ngsolve::is_analysis_file(path) {
+                return Err("Choose an NGSolve .analysis.json file".into());
+            }
+            self.open_python_workspace();
+            self.python_workspace.open_file(path)?;
+        }
+        self.python_workspace.run_analysis(&self.session)
+    }
+
     pub(crate) fn prepare_python_workspace(&mut self) {
-        self.python_workspace.prepare(self.session.path.as_deref(), &self.prefs.python_interpreter, &self.prefs.python_bridge);
+        self.python_workspace.prepare(self.session.path.as_deref(), &self.prefs.python_interpreter);
     }
 
     pub(crate) fn open_python_workspace(&mut self) {
@@ -497,11 +619,10 @@ impl ModelApp {
         self.python_workspace.open = true;
     }
 
-    pub(crate) fn set_python_paths(&mut self, python: String, bridge: String) {
-        if (self.prefs.python_interpreter.as_str(), self.prefs.python_bridge.as_str()) != (python.as_str(), bridge.as_str()) {
-            self.python_workspace.runtime = Some(Runtime::with_overrides(&python, &bridge));
+    pub(crate) fn set_python_interpreter(&mut self, python: String) {
+        if self.prefs.python_interpreter != python {
+            self.python_workspace.runtime = Some(Runtime::with_override(&python));
             self.prefs.python_interpreter = python;
-            self.prefs.python_bridge = bridge;
             self.prefs.save(self.services.prefs.as_ref());
         }
     }
@@ -514,19 +635,6 @@ fn selected(source: &str, selection: &Selection) -> Option<(String, usize)> {
     let line = source.chars().take(selection.start).filter(|c| *c == '\n').count() + 1;
     let code = source.chars().skip(selection.start).take(selection.end - selection.start).collect();
     Some((code, line))
-}
-
-fn snapshot_case(mut definition: Value, case: &Path, snapshot: &Path) -> Result<PathBuf, String> {
-    let fields = definition.as_object_mut().ok_or("A solver case must be a JSON object")?;
-    let script =
-        fields.get("script").and_then(Value::as_str).filter(|path| !path.trim().is_empty()).ok_or("The solver case needs a Python script")?;
-    let original_folder = case.parent().ok_or("The original case needs a parent folder")?;
-    let script = original_folder.join(script);
-    fields.insert("script".into(), json!(path_string(&script)?));
-    fields.insert("model".into(), json!(path_string(snapshot)?));
-    let path = snapshot.with_file_name("snapshot.case.json");
-    fs::write(&path, serde_json::to_vec_pretty(&definition).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-    Ok(path)
 }
 
 fn show_result(app: &mut ModelApp, path: &Path, view: &PreferredView) -> Result<(), String> {
@@ -585,8 +693,36 @@ mod tests {
     #[test]
     fn selection_offsets_are_unicode_characters_and_preserve_the_source_line() {
         let source = "# µ\nvalue = 5\n";
-        assert_eq!(selected(source, &Selection { start: 4, end: 13 }), Some(("value = 5".into(), 2)));
-        assert_eq!(selected(source, &Selection { start: 0, end: 0 }), None);
+        assert_eq!(selected(source, &Selection { start: 4, end: 13, caret: 13 }), Some(("value = 5".into(), 2)));
+        assert_eq!(selected(source, &Selection { start: 0, end: 0, caret: 0 }), None);
+    }
+
+    #[test]
+    fn new_analysis_opens_a_unique_editable_template() {
+        let dir = std::env::temp_dir().join(format!("fc-python-analysis-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let model = dir.join("sample.fieldcraft");
+        let script = dir.join("solve.py");
+        let existing = dir.join("sample.analysis.json");
+        fs::write(&model, "").unwrap();
+        fs::write(&script, "pass\n").unwrap();
+        fs::write(&existing, "existing definition").unwrap();
+        let mut workspace = Workspace::default();
+        workspace.set_project(&dir).unwrap();
+        assert!(workspace.open_file(&model).is_err());
+        workspace.open_file(&script).unwrap();
+        workspace.new_analysis(Some(&model), 2).unwrap();
+        let path = dir.canonicalize().unwrap().join("sample-2.analysis.json");
+        assert_eq!(workspace.active.as_ref(), Some(&path));
+        assert_eq!(workspace.analysis.as_ref(), Some(&path));
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved["format"], ngsolve::ANALYSIS_FORMAT);
+        assert_eq!(saved["model"], "sample.fieldcraft");
+        assert_eq!(saved["script"], "solve.py");
+        assert_eq!(saved["dimension"], 2);
+        assert_eq!(saved["materials"], json!([]));
+        assert_eq!(fs::read_to_string(existing).unwrap(), "existing definition");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -606,30 +742,14 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_cases_keep_script_paths_relative_to_the_original_case() {
-        let parent = std::env::temp_dir().join(format!("fc-snapshot-case-{}", std::process::id()));
-        fs::create_dir(&parent).unwrap();
-        let case = parent.join("cases/magnetic.case.json");
-        let snapshot = parent.join("model.fieldcraft");
-        let definition = json!({"model":"will-be-saved.fieldcraft","script":"solve.py","materials":["steel"]});
-        let copy = snapshot_case(definition, &case, &snapshot).unwrap();
-        let effective: Value = serde_json::from_str(&read_text(&copy).unwrap()).unwrap();
-        assert_eq!(effective["model"], json!(snapshot));
-        assert_eq!(effective["script"], json!(parent.join("cases/solve.py")));
-        assert_eq!(effective["materials"], json!(["steel"]));
-        fs::remove_dir_all(parent).unwrap();
-    }
-
-    #[test]
     fn persistent_console_shares_variables_recovers_after_errors_and_writes_files() {
         let Some(python) = std::env::var_os("FIELDCRAFT_WORKSPACE_TEST_PYTHON") else { return };
         let dir = std::env::temp_dir().join(format!("fc-python-console-{}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         let mut workspace = Workspace::default();
         workspace.set_project(&dir).unwrap();
-        workspace.runtime = Some(Runtime { python: python.to_string_lossy().into_owned(), bridge: String::new() });
-        let mut run = |source, line| {
-            workspace.console_request(source, "<console>", line, None).unwrap();
+        workspace.runtime = Some(Runtime::with_override(&python.to_string_lossy()));
+        fn wait_for_console(workspace: &mut Workspace) {
             for _ in 0..400 {
                 workspace.poll();
                 if workspace.console.as_ref().is_some_and(|console| !console.busy) {
@@ -638,6 +758,10 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             panic!("console returned no completion marker");
+        }
+        let mut run = |source, line| {
+            workspace.console_request(source, "<console>", line, None).unwrap();
+            wait_for_console(&mut workspace);
         };
         run("value = 41", 1);
         run("raise ValueError('controlled failure')", 5);
@@ -645,6 +769,18 @@ mod tests {
         assert!(workspace.log.iter().any(|line| line.contains("line 5")));
         assert!(workspace.log.iter().any(|line| line == "42"));
         assert_eq!(fs::read_to_string(dir.join("answer.txt")).unwrap(), "42");
+        let script = dir.join("sections.py");
+        let source = "# %% Define µ\nvalue += 2\ntext = \"\"\"\n# %% In a string\n\"\"\"\n#%% Inspect\nprint(value)\n# %% Fail\nraise RuntimeError('Section error')\n";
+        fs::write(&script, source).unwrap();
+        workspace.open_file(&script).unwrap();
+        for marker in ["# %% In a string", "#%% Inspect", "# %% Fail"] {
+            let caret = source[..source.find(marker).unwrap()].chars().count();
+            workspace.selection = Some(Selection { start: caret, end: caret, caret });
+            workspace.run_section().unwrap();
+            wait_for_console(&mut workspace);
+        }
+        assert!(workspace.log.iter().any(|line| line == "43"));
+        assert!(workspace.log.iter().any(|line| line.contains("sections.py\", line 9")));
         drop(workspace);
         fs::remove_dir_all(dir).unwrap();
     }

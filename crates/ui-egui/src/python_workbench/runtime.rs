@@ -1,4 +1,4 @@
-//! Use the installed bridge through its public Python entry points.
+//! Select the private or project Python environment and run the persistent console.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -7,7 +7,29 @@ use std::process::Command;
 /// A selection has the same namespace as the console prompt. Read requests from the original
 /// stdin; the script sees EOF on stdin so input() cannot consume the next editor request.
 pub(super) const CONSOLE: &str = r#"
-import json, linecache, os, sys, textwrap, traceback
+import io, json, linecache, os, sys, textwrap, tokenize, traceback
+
+def section(document, line):
+    lines = io.StringIO(document).readlines()
+    start, end = 1, len(lines) + 1
+    has_marker = False
+    for token in tokenize.generate_tokens(io.StringIO(document).readline):
+        if token.type != tokenize.COMMENT or not token.string[1:].lstrip().startswith('%%'):
+            continue
+        row, column = token.start
+        if lines[row - 1][:column].strip():
+            continue
+        has_marker = True
+        if row > line:
+            end = row
+            break
+        start = row + 1
+    if not has_marker:
+        raise ValueError('Add a # %% line to define sections.')
+    code = ''.join(lines[start - 1:end - 1])
+    if not code.strip():
+        raise ValueError('The current section is empty.')
+    return start, code
 
 def main():
     requests, response = sys.stdin, sys.stdout
@@ -16,15 +38,23 @@ def main():
     for raw in requests:
         request = json.loads(raw)
         filename = request['file']
-        if request.get('document') is not None:
-            document = request['document']
+        document = request.get('document')
+        if document is not None:
             linecache.cache[filename] = (len(document), None, document.splitlines(keepends=True), filename)
             namespace['__file__'] = filename
-        source = '\n' * (request['line'] - 1) + textwrap.dedent(request['code'])
         original_path = sys.path[:]
         if os.path.isabs(filename):
             sys.path.insert(0, os.path.dirname(filename))
         try:
+            if 'section' in request:
+                try:
+                    line, code = section(document, request['section'])
+                except (tokenize.TokenError, SyntaxError, ValueError) as error:
+                    print(f'Run Section: {error}')
+                    continue
+            else:
+                line, code = request['line'], request['code']
+            source = '\n' * (line - 1) + textwrap.dedent(code)
             try:
                 expression = compile(source, filename, 'eval')
             except SyntaxError:
@@ -43,21 +73,12 @@ def main():
 main()
 "#;
 
-pub(super) const RUN_CASE: &str = r#"
-import sys
-from pathlib import Path
-from types import SimpleNamespace
-
-case_path, output, bridge = sys.argv[1:4]
-sys.path.insert(0, bridge)
-from case_run import load_case
-from workflow import run
-
-case = load_case(Path(case_path))
-run(SimpleNamespace(model=case['model'],
-    script=case['script'], out=Path(output), python=sys.executable,
-    adapter=Path(bridge), timeout=3600, dimension=case.get('dimension', 3),
-    materials=case['materials'], boundaries=case['boundaries'], interfaces=case['interfaces']))
+pub(super) const RUN_FILE: &str = r#"
+import runpy
+script = Path(sys.argv.pop(1))
+sys.argv[0] = str(script)
+sys.path.insert(0, str(script.parent))
+runpy.run_path(str(script), run_name='__main__')
 "#;
 
 pub(super) const PROJECT: &str = "[project]\nname = \"fieldcraft-project\"\nversion = \"0.1.0\"\nrequires-python = \"==3.13.*\"\ndependencies = [\n    \"ngsolve==6.2.2608\",\n    \"numpy==2.3.5\",\n]\n";
@@ -65,19 +86,11 @@ pub(super) const PROJECT: &str = "[project]\nname = \"fieldcraft-project\"\nvers
 #[derive(Clone, Debug, Default)]
 pub(super) struct Runtime {
     pub(super) python: String,
-    pub(super) bridge: String,
 }
 
 impl Runtime {
-    pub(super) fn with_overrides(python: &str, bridge: &str) -> Self {
-        let mut runtime = if python.is_empty() || bridge.is_empty() { Self::detect() } else { Self::default() };
-        if !python.is_empty() {
-            runtime.python = python.to_string();
-        }
-        if !bridge.is_empty() {
-            runtime.bridge = bridge.to_string();
-        }
-        runtime
+    pub(super) fn with_override(python: &str) -> Self {
+        if python.is_empty() { Self::detect() } else { Self { python: python.to_string() } }
     }
 
     fn detect() -> Self {
@@ -105,9 +118,11 @@ impl Runtime {
         {
             roots.push(parent.to_path_buf());
         }
-        roots.into_iter().find(|root| root.join(relative).is_file() && root.join("bridge/workflow.py").is_file()).map_or_else(Self::default, |root| {
-            Self { python: root.join(relative).to_string_lossy().into_owned(), bridge: root.join("bridge").to_string_lossy().into_owned() }
-        })
+        roots
+            .into_iter()
+            .map(|root| root.join(relative))
+            .find(|path| path.is_absolute() && path.is_file())
+            .map_or_else(Self::default, |path| Self { python: path.to_string_lossy().into_owned() })
     }
 
     pub(super) fn python(&self, root: &Path) -> PathBuf {
@@ -116,33 +131,7 @@ impl Runtime {
     }
 
     pub(super) fn command(&self, root: &Path, base: bool) -> Result<Command, String> {
-        // A venv's executable path must keep its symlink so CPython finds pyvenv.cfg.
         let python = if base { PathBuf::from(&self.python) } else { self.python(root) };
-        if !python.is_absolute() || !python.is_file() {
-            return Err("Select the installed FieldCraft Python interpreter in Settings → Python".into());
-        }
-        let mut command = Command::new(python);
-        command
-            .current_dir(root)
-            .env_remove("PYTHONHOME")
-            .env_remove("PYTHONPATH")
-            .env_remove("VIRTUAL_ENV")
-            .env("PYTHONNOUSERSITE", "1")
-            .env("PYTHONUNBUFFERED", "1")
-            .env("PYTHONUTF8", "1")
-            .arg("-s");
-        if !self.bridge.is_empty() {
-            command.env("PYTHONPATH", &self.bridge);
-        }
-        Ok(command)
-    }
-
-    pub(super) fn bridge(&self) -> Result<&Path, String> {
-        let bridge = Path::new(&self.bridge);
-        if bridge.is_absolute() && bridge.join("workflow.py").is_file() {
-            Ok(bridge)
-        } else {
-            Err("Select the installed NGSolve bridge folder in Settings → Python".into())
-        }
+        fieldcraft_engine::ngsolve::python_command(&python, root).map_err(|error| error.to_string())
     }
 }
