@@ -965,7 +965,7 @@ impl ModelApp {
         let Some(kind) = Kind::of(path) else {
             self.set_status(
                 format!(
-                    "{path}: FieldCraft opens .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
+                    "{path}: FieldCraft opens .fieldcraft models, .sc/.solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
                 ),
                 true,
             );
@@ -1479,7 +1479,7 @@ pub fn show(app: &mut ModelApp, ctx: &egui::Context) {
         let fraction = app.loading.as_ref().and_then(|l| l.progress.snapshot().fraction());
         let text = match app.loading.as_ref() {
             Some(l) => l.line(),
-            None => "Drop to open: .fieldcraft models, .solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes".into(),
+            None => "Drop to open: .fieldcraft models, .sc/.solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes".into(),
         };
         let mut cancel = false;
         // A notification surface (the kit's Toast), independent of the workspace layout, with the
@@ -2778,12 +2778,14 @@ pub(crate) mod tests {
     #[test]
     fn a_picked_design_meshes_from_the_ribbon_with_the_defaults() {
         let dir = temp("path");
-        let design = dir.join("plate.solidcraft").to_string_lossy().to_string();
+        let design = dir.join("plate.sc").to_string_lossy().to_string();
         std::fs::write(&design, fieldcraft_geometry::sample::plate_design(&fieldcraft_geometry::sample::Plate::default()).unwrap()).unwrap();
         let offered = Rc::new(RefCell::new(Vec::new()));
         let mut app = ModelApp::new(Session::default());
-        app.services.pick_open = Some(answering(Some(design.clone()), offered));
+        app.services.pick_open = Some(answering(Some(design.clone()), offered.clone()));
         app.open_dialog(None);
+        assert!(offered.borrow()[0][0].extensions.contains(&"sc"));
+        assert!(Kind::Design.filters()[0].extensions.contains(&"sc"));
         app.wait_loaded();
         assert_eq!(app.session.design.as_ref().map(|d| d.bodies.len()), Some(1), "{:?}", app.status);
         assert!(!app.display().bounds.is_empty());

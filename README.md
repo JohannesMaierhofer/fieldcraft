@@ -84,7 +84,7 @@ The same part also meshes all-hex automatically with the octree mesher (`mesh.he
 
 ## What it does today
 
-- **Geometry in:** Open a SolidCraft design, STEP or IGES file from File → Open or drop it on
+- **Geometry in:** Open a SolidCraft design (`.sc` or `.solidcraft`), STEP or IGES file from File → Open or drop it on
   the viewport. CAD bodies keep their placement and faces for meshing and named sets. FieldCraft
   also reads face-tagged 3MF meshes and checks surfaces for welding, manifoldness, orientation
   and self-intersection.
