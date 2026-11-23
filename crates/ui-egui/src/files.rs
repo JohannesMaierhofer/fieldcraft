@@ -45,8 +45,15 @@ pub type PickSave = Box<dyn Fn(&str, &[Filter]) -> Option<String>>;
 /// An owned request for a host's asynchronous file chooser.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FilePicker {
-    Open { filters: Vec<Filter> },
-    Save { name: String, filters: Vec<Filter> },
+    Open {
+        filters: Vec<Filter>,
+    },
+    Save {
+        name: String,
+        filters: Vec<Filter>,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    Folder,
 }
 /// Hosts return promptly; the future is polled on the UI thread without waiting.
 pub type PickFile = Box<dyn Fn(FilePicker) -> Pin<Box<dyn Future<Output = Option<String>>>>>;
@@ -73,6 +80,8 @@ pub struct Services {
 
 enum PickerAction {
     Open,
+    #[cfg(not(target_arch = "wasm32"))]
+    PythonProject,
     Save {
         params: Value,
         next: Option<Replace>,
@@ -717,6 +726,8 @@ impl ModelApp {
         let path = match request {
             FilePicker::Open { filters } => self.services.pick_open.as_ref().and_then(|p| p(&filters)),
             FilePicker::Save { name, filters } => self.services.pick_save.as_ref().and_then(|p| p(&name, &filters)),
+            #[cfg(not(target_arch = "wasm32"))]
+            FilePicker::Folder => None,
         };
         path.is_some_and(|path| self.picked_file(action, path))
     }
@@ -763,6 +774,13 @@ impl ModelApp {
                 false
             }
             PickerAction::Script => self.run_script_file(&path).is_ok(),
+            #[cfg(not(target_arch = "wasm32"))]
+            PickerAction::PythonProject => {
+                if let Err(error) = self.python_workspace.set_project(Path::new(&path)) {
+                    self.set_status(error, true);
+                }
+                false
+            }
             PickerAction::Save { mut params, next } => {
                 params["path"] = json!(with_extension(path, "fieldcraft"));
                 let saved = self.run("file.save_as", params).is_ok();
@@ -924,6 +942,11 @@ impl ModelApp {
             return;
         }
         self.pick_file(FilePicker::Open { filters: vec![SCRIPT] }, PickerAction::Script);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn pick_python_project(&mut self) {
+        self.pick_file(FilePicker::Folder, PickerAction::PythonProject);
     }
 
     /// Read the script at `path` (bounded in size) and run it; the status says what happened.
@@ -1714,6 +1737,10 @@ pub fn file_menu(app: &mut ModelApp, ui: &mut egui::Ui) {
     }
     if row(ui, "file.script", "Run Script…", None) {
         act = Some(Box::new(|app| app.run_script_dialog()));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if row(ui, "ui.python", "Python Workspace…", None) {
+        act = Some(Box::new(|app| app.python_workspace.open(app.session.path.as_deref())));
     }
     // Each group behind a rule, as the others.
     crate::frame::menu_separator(ui);

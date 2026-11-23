@@ -2125,6 +2125,7 @@ dependencies = [
  "fieldcraft-explicit",
  "fieldcraft-geometry",
  "fieldcraft-gpu",
+ "fieldcraft-io",
  "fieldcraft-model",
  "fieldcraft-render",
  "fieldcraft-update",

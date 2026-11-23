@@ -159,6 +159,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 let (filters, name) = match request {
                     FilePicker::Open { filters } => (filters, None),
                     FilePicker::Save { filters, name } => (filters, Some(name)),
+                    FilePicker::Folder => return dialog.pick_folder().await.map(|folder| folder.path().to_string_lossy().into_owned()),
                 };
                 let dialog = filters.iter().fold(dialog, |d, f| d.add_filter(f.name, f.extensions));
                 let file = match name {

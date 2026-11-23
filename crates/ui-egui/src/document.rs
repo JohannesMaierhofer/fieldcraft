@@ -34,6 +34,9 @@ impl ModelApp {
         let ModelApp {
             // The document itself, replaced by the command.
             session: _,
+            // The project editor stays open when a model from its file tree is opened.
+            #[cfg(not(target_arch = "wasm32"))]
+                python_workspace: _,
             ui,
             // The camera is framed home on the new document ([`ModelApp::frame_new_document`]).
             cam: _,
