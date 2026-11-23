@@ -1,11 +1,7 @@
 name: macOS NGSolve installers
 
 on:
-  push:
-    branches: [codex/ngsolve-installers, 'codex/ngsolve-macos-recheck-*']
-    paths-ignore:
-      - packaging/ngsolve/control
-      - .github/workflows/ngsolve-platforms.yml
+  # Community releases are assembled locally. A maintainer can request a hosted check.
   workflow_dispatch:
     inputs:
       desktop_run:

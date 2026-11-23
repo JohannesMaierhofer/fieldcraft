@@ -1,11 +1,7 @@
 name: External solver installers
 on:
+  # Community releases are assembled locally. A maintainer can request a hosted check.
   workflow_dispatch:
-  push:
-    branches: [codex/ngsolve-installers]
-    paths-ignore:
-      - .github/workflows/macos-ngsolve-installer.yml
-      - 'packaging/macos/**'
 permissions:
   contents: read
 jobs:

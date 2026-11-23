@@ -19,7 +19,7 @@ fi
 if [[ -z "$run" ]]; then exit 0; fi
 [[ "$run" =~ ^[0-9]+$ ]]
 metadata=$(gh api "$base/runs/$run")
-jq -e '.head_branch=="codex/ngsolve-installers" and .path==".github/workflows/macos-ngsolve-installer.yml" and .event=="push"' <<< "$metadata" >/dev/null
+jq -e '.head_branch=="codex/ngsolve-installers" and .path==".github/workflows/macos-ngsolve-installer.yml" and (.event=="push" or .event=="workflow_dispatch")' <<< "$metadata" >/dev/null
 sha=$(jq -r '.head_sha' <<< "$metadata")
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
 git cat-file -e "$sha^{commit}"
