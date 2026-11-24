@@ -3163,10 +3163,13 @@ pub const IMPORT_VTU: &[Field] = &[path("path", "Results file", false)
 pub const EXTERNAL_VIEW: &[Field] = &[
     int("frame", "Frame", 0, fieldcraft_io::external::MAX_FRAMES as i64 - 1).help("Frame index, starting at zero."),
     choice("association", "Field location", &[("point", "Points"), ("cell", "Cells")]).help("Where the selected values are stored."),
-    text("field", "Contour field").help("Array name from the result file. An empty name turns the contours off."),
+    text("field", "Contour field").clearable().hint("Current contour").help("Enter an array name, or choose Clear to turn contours off."),
     choice("component", "Component", &[("value", "Scalar"), ("magnitude", "Magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])
         .help("Quantity to color."),
-    text("displacement", "Displacement field").help("Name of a two- or three-component point array in meters. An empty name clears deformation."),
+    text("displacement", "Displacement field")
+        .clearable()
+        .hint("Current displacement")
+        .help("Enter the name of a two- or three-component point array in meters, or choose Clear to remove deformation."),
     range("scale", "Deformation scale", D::None, 0.0, crate::results::MAX_DEFORMATION_SCALE)
         .help("Dimensionless multiplier. One shows the actual displacement."),
     flag("show", "Show external results").help("Display the selected result grid. Turn off to return to the model."),

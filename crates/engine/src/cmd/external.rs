@@ -114,10 +114,7 @@ fn view(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if selected.frame != frame {
         selected.frame = frame;
-        // A moving or adaptive grid may have a different set of fields in this frame.
-        if selected.validate(series).is_err() {
-            selected.select_default(data);
-        }
+        selected.inherit_frame(data, p.get("scale").is_some_and(|v| !v.is_null()));
     }
     let association = super::opt::<Association>(p, "association")?;
     let field = super::opt::<String>(p, "field")?;
@@ -226,6 +223,49 @@ mod tests {
             assert!(s.execute(IMPORT.id, &json!({"path":index})).is_err());
         }
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn frame_changes_inherit_contours_and_deformation_independently() {
+        use fieldcraft_io::external::{Cell, Field, Grid};
+        let mut frames = [0., 1., 2., 3.].map(|time| Frame {
+            time,
+            grid: Grid { points: vec![[1., 0., 0.]], cells: vec![Cell { vtk_type: 1, points: vec![0] }] },
+            point_data: [
+                ("A".into(), Field { components: 1, values: vec![1.] }),
+                ("T".into(), Field { components: 3, values: vec![1., 2., 3.] }),
+                ("u".into(), Field { components: 2, values: vec![0., 0.] }),
+            ]
+            .into(),
+            cell_data: Default::default(),
+        });
+        frames[1].point_data.remove("u");
+        frames[2].point_data.get_mut("u").unwrap().values[0] = fieldcraft_model::MAX_COORD;
+        frames[3].point_data.remove("T");
+        let mut s = Session::default();
+        s.set_external_results(Series { frames: frames.into() }).unwrap();
+        let selection = json!({"frame":0,"field":"T","component":"y","displacement":"u","scale":2.0});
+        for request in [json!({"frame":1}), json!({"frame":1,"displacement":""}), json!({"frame":2})] {
+            s.execute(VIEW.id, &selection).unwrap();
+            let view = &s.execute(VIEW.id, &request).unwrap()["view"];
+            assert_eq!((&view["field"], &view["component"], &view["displacement"]), (&json!("T"), &json!("y"), &Value::Null));
+        }
+        s.execute(VIEW.id, &selection).unwrap();
+        for invalid in [
+            json!({"frame":1,"displacement":"u"}),
+            json!({"frame":1,"field":"missing"}),
+            json!({"frame":3,"component":"z"}),
+            json!({"frame":2,"scale":2.0}),
+            json!({"frame":2,"displacement":"u"}),
+        ] {
+            assert!(s.execute(VIEW.id, &invalid).is_err(), "{invalid}");
+            assert_eq!(s.external_view.as_ref().unwrap().frame, 0);
+        }
+        let view = &s.execute(VIEW.id, &json!({"frame":2,"scale":0.25})).unwrap()["view"];
+        assert_eq!(view["displacement"], "u");
+        let view = &s.execute(VIEW.id, &json!({"frame":3})).unwrap()["view"];
+        assert_eq!(view["field"], "A");
+        assert_eq!(view["displacement"], "u");
     }
 
     #[test]

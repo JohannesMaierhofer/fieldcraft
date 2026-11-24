@@ -10,6 +10,7 @@ mod tests;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use quick_xml::{Reader, events::Event};
 use roxmltree::{Document, Node, ParsingOptions};
 
 use crate::external::{Cell, Field, Frame, Grid, MAX_CELLS, MAX_COMPONENTS, MAX_FIELDS, MAX_FRAME_BYTES, MAX_FRAMES, MAX_POINTS, cell_arity};
@@ -58,19 +59,64 @@ fn count(node: Node<'_, '_>, name: &str, limit: usize) -> Result<usize> {
     Ok(n)
 }
 
+/// Read XML tokens as bytes until the real AppendedData opening tag. Raw payload bytes
+/// must never enter an XML parser. Comments, CDATA, and quoted attributes are distinct
+/// token kinds, even if their text looks like a tag.
+fn appended_start(bytes: &[u8]) -> Result<Option<usize>> {
+    let mut reader = Reader::from_reader(bytes);
+    let mut depth = 0usize;
+    for _ in 0..128_000 {
+        match reader.read_event().map_err(bad)? {
+            Event::Start(e) if depth == 1 && e.name().as_ref() == "AppendedData" => {
+                return Ok(Some(usize::try_from(reader.buffer_position()).map_err(bad)?));
+            }
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth = depth.saturating_sub(1),
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+    }
+    Err(Error::Limit("too many XML tokens before VTK appended data".into()))
+}
+
+/// AppendedData is the last child of VTKFile. Validate its trailer so even a comment
+/// containing a literal closing tag after the payload cannot move an array boundary.
+fn appended_end(body: &[u8]) -> Result<usize> {
+    let close = b"</AppendedData";
+    let mut allowance = body.len().saturating_mul(2);
+    for (i, _) in body.windows(close.len()).enumerate().rev().filter(|(_, w)| *w == close) {
+        let tail = body.get(i..).ok_or_else(|| bad("invalid AppendedData trailer"))?;
+        let mut reader = Reader::from_reader(tail);
+        reader.config_mut().allow_unmatched_ends = true;
+        let mut ends = ["AppendedData", "VTKFile"].into_iter();
+        loop {
+            match reader.read_event() {
+                Ok(Event::End(e)) if ends.next() == Some(e.name().as_ref()) => {}
+                Ok(Event::Text(t)) if t.as_ref().bytes().all(|b| b.is_ascii_whitespace()) => {}
+                Ok(Event::Comment(_) | Event::PI(_)) => {}
+                Ok(Event::Eof) if ends.next().is_none() => return Ok(i),
+                _ => break,
+            }
+        }
+        allowance = allowance
+            .checked_sub(usize::try_from(reader.buffer_position()).map_err(bad)?)
+            .ok_or_else(|| Error::Limit("invalid or excessively complex VTU trailer".into()))?;
+    }
+    Err(bad("missing AppendedData closing tag"))
+}
+
 fn metadata(bytes: &[u8]) -> Result<(Cow<'_, str>, Option<&[u8]>)> {
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(Error::Limit("VTU file too large".into()));
     }
-    // Raw VTK payloads are not XML character data. Keep their bytes out of the XML parser.
-    let open = b"<AppendedData";
-    let close = b"</AppendedData>";
-    let Some(tag) = bytes.windows(open.len()).position(|w| w == open) else {
+    if !bytes.windows(b"<AppendedData".len()).any(|w| w == b"<AppendedData") {
+        return Ok((Cow::Borrowed(utf8(bytes)?), None));
+    }
+    let Some(begin) = appended_start(bytes)? else {
         return Ok((Cow::Borrowed(utf8(bytes)?), None));
     };
-    let after = bytes.get(tag..).ok_or_else(|| bad("invalid AppendedData"))?;
-    let begin = after.iter().position(|&b| b == b'>').ok_or_else(|| bad("incomplete AppendedData tag"))? + tag + 1;
-    let end = bytes.windows(close.len()).rposition(|w| w == close).ok_or_else(|| bad("missing AppendedData closing tag"))?;
+    let remaining = bytes.get(begin..).ok_or_else(|| bad("invalid AppendedData bounds"))?;
+    let end = begin + appended_end(remaining)?;
     let body = bytes.get(begin..end).ok_or_else(|| bad("invalid AppendedData bounds"))?;
     let sentinel = body.iter().position(|b| !b.is_ascii_whitespace()).ok_or_else(|| bad("missing AppendedData sentinel"))?;
     if body.get(sentinel) != Some(&b'_') {
@@ -98,6 +144,37 @@ fn cell_array<'a, 'i>(cells: Node<'a, 'i>, name: &str) -> Result<Node<'a, 'i>> {
     Ok(node)
 }
 
+/// The Lagrange vertices follow the corresponding linear cell's order, then the
+/// edge-interior samples follow VTK's edge order. Quadratic curves, triangles, and
+/// tetrahedra have exactly one point per edge and no face or volume points.
+/// See Corona and Thompson, [Modeling Arbitrary-order Lagrange Finite Elements in the
+/// Visualization Toolkit](https://www.kitware.com/modeling-arbitrary-order-lagrange-finite-elements-in-the-visualization-toolkit/).
+fn canonical_cell(vtk_type: u32, arity: usize) -> Result<u8> {
+    let kind = match (vtk_type, arity) {
+        (68, 2) => 3,
+        (68, 3) => 21,
+        (69, 3) => 5,
+        (69, 6) => 22,
+        (70, 4) => 9,
+        (71, 4) => 10,
+        (71, 10) => 24,
+        (72, 8) => 12,
+        (73, 6) => 13,
+        (68..=73, _) => return Err(bad(format!("unsupported Lagrange cell type {vtk_type} with {arity} points"))),
+        _ => {
+            let kind = u8::try_from(vtk_type)
+                .ok()
+                .filter(|k| cell_arity(*k).is_some())
+                .ok_or_else(|| bad(format!("unsupported VTK cell type {vtk_type}")))?;
+            if cell_arity(kind) != Some(arity) {
+                return Err(bad(format!("cell offsets give VTK cell type {kind} the wrong number of points")));
+            }
+            kind
+        }
+    };
+    Ok(kind)
+}
+
 fn geometry(decoder: &mut array::Decoder<'_>, piece: Node<'_, '_>, np: usize, nc: usize, budget: &mut usize) -> Result<Grid> {
     crate::external::charge_storage(budget, crate::external::FRAME_BYTES)?;
     crate::external::charge_storage(budget, np.saturating_mul(24))?;
@@ -111,20 +188,16 @@ fn geometry(decoder: &mut array::Decoder<'_>, piece: Node<'_, '_>, np: usize, nc
     drop(coords);
     let source = one(piece, "Cells")?;
     let types = decoder.indices(cell_array(source, "types")?, nc)?;
+    let offsets = decoder.indices(cell_array(source, "offsets")?, nc)?;
     let mut kinds = Vec::with_capacity(nc);
-    let mut entries = 0_usize;
-    for number in types {
-        let kind = u8::try_from(number).map_err(|_| bad(format!("unsupported VTK cell type {number}")))?;
-        let arity = cell_arity(kind).ok_or_else(|| bad(format!("unsupported VTK cell type {kind}")))?;
-        entries = entries.checked_add(arity).ok_or_else(|| bad("cell connectivity too large"))?;
-        kinds.push((kind, entries));
+    let mut entries = 0usize;
+    for (number, offset) in types.into_iter().zip(offsets) {
+        let end = offset as usize;
+        let arity = end.checked_sub(entries).ok_or_else(|| bad("cell offsets must increase"))?;
+        kinds.push((canonical_cell(number, arity)?, end));
+        entries = end;
     }
     crate::external::charge_storage(budget, entries.saturating_mul(4))?;
-    let offsets = decoder.indices(cell_array(source, "offsets")?, nc)?;
-    if !offsets.iter().zip(&kinds).all(|(&offset, &(_, end))| offset as usize == end) {
-        return Err(bad("cell offsets do not match the cell types"));
-    }
-    drop(offsets);
     let indices = decoder.indices(cell_array(source, "connectivity")?, entries)?;
     if indices.iter().any(|&index| index as usize >= np) {
         return Err(bad("cell references a missing point"));

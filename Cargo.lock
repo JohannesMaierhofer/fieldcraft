@@ -2094,6 +2094,7 @@ dependencies = [
  "fieldcraft-solver",
  "flate2",
  "log",
+ "quick-xml 0.42.0",
  "roxmltree",
  "serde",
  "serde_json",

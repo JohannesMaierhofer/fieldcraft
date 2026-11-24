@@ -855,14 +855,24 @@ impl ModelApp {
         // A script waits for the background job, as a command does: the job's session would
         // replace what it changed.
         self.ensure_idle()?;
-        #[allow(clippy::disallowed_methods, reason = "scripts are not jobs yet")]
-        let r = self.session.run_script(script).map(|_| ()).map_err(|e| e.to_string());
+        let mut last_tab = None;
+        let r = self
+            .session
+            .run_script_with(script, |id| {
+                if matches!(id, "results.animate" | "results.import.vtu") {
+                    self.external_clock = None;
+                }
+                if let Some(tab) = catalogue::stage_tab(id) {
+                    last_tab = Some(tab);
+                }
+            })
+            .map(|_| ())
+            .map_err(|e| e.to_string());
         self.model_changed();
-        if r.is_ok() {
-            let commands = script.as_array().into_iter().flatten().filter_map(|step| step.get("command").and_then(Value::as_str));
-            if let Some(id) = commands.rev().find(|id| catalogue::stage_tab(id).is_some()) {
-                self.follow_stage(id);
-            }
+        if r.is_ok()
+            && let Some(tab) = last_tab
+        {
+            self.ui.select_tab(tab);
         }
         match &r {
             Ok(()) => self.set_status("Script done", false),

@@ -172,7 +172,13 @@ impl<'i> Decoder<'i> {
             return Err(bad("cell topology requires integer arrays"));
         }
         let format = node.attribute("format").unwrap_or("ascii");
-        let text = node.text().unwrap_or("");
+        // XML comments and CDATA boundaries may split a numeric token or a base64 quartet.
+        // Text in optional child elements (such as VTK InformationKey) is metadata.
+        let mut parts = node.children().filter(|n| n.is_text()).filter_map(|n| n.text());
+        let mut text = Cow::Borrowed(parts.next().unwrap_or(""));
+        for part in parts {
+            text.to_mut().push_str(part);
+        }
         let binary = match format {
             "ascii" => None,
             "binary" | "appended" => Some(self.binary(node, text.as_bytes(), format)?),

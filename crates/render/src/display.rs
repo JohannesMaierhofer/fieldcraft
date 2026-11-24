@@ -195,6 +195,26 @@ fn indexed_face(nodes: &[u32], face: &[usize], canonical: &[u32]) -> Option<(Ind
     Some((key, reversed))
 }
 
+/// Classify the deformed cell against the same triangle planes for both copies of an
+/// interface. A collapsed or folded cell with corners on both sides leaves the face visible.
+fn indexed_face_side(key: &IndexedFace, face: &[usize], corners: &[u32], positions: &[[f64; 3]]) -> Option<bool> {
+    let n = face_corner_count(face.len());
+    let pos = |id: u32| positions.get(id as usize).copied().map(Vec3::from);
+    let a = pos(*key.first()?)?;
+    let mut side = None;
+    for i in 1..n - 1 {
+        let normal = (pos(*key.get(i)?)? - a).cross(pos(*key.get(i + 1)?)? - a);
+        for (_, &corner) in corners.iter().enumerate().filter(|(local, _)| !face.contains(local)) {
+            let distance = normal.dot(pos(corner)? - a);
+            if distance == 0.0 || !distance.is_finite() || side.is_some_and(|s| s != (distance > 0.0)) {
+                return None;
+            }
+            side = Some(distance > 0.0);
+        }
+    }
+    side
+}
+
 /// Newell's normal of a polygon (robust for non-planar quads); `None` when degenerate.
 pub(crate) fn polygon_normal(p: &[Vec3]) -> Option<Vec3> {
     let mut n = Vec3::ZERO;
@@ -313,17 +333,22 @@ impl DisplayMesh {
             scratch_budget = budget;
             reserve_display(&mut keys, face_count, &mut scratch_budget)?;
             for (_, kind, nodes) in elements.clone().filter(|(_, kind, _)| kind.dimension() == 3) {
-                keys.extend(drawn_faces(kind).iter().filter_map(|f| indexed_face(nodes, f, &canonical)));
+                keys.extend(drawn_faces(kind).iter().filter_map(|face| {
+                    let (key, reversed) = indexed_face(nodes, face, &canonical)?;
+                    let side = indexed_face_side(&key, face, nodes.get(..kind.corner_count())?, positions);
+                    Some((key, reversed, side))
+                }));
             }
             keys.sort_unstable();
-            // Same-side overlapping volumes and nonmanifold face groups have no unique
-            // interior interface. Only a pair with opposite boundary winding cancels.
-            let opposite = |group: &[(IndexedFace, bool)]| matches!(group, [a,b] if a.1 != b.1);
+            // Two oppositely wound faces cancel only if the deformed cells still lie on
+            // opposite sides. Exaggerated displacements can invert a cell across its neighbor.
+            let opposite =
+                |group: &[(IndexedFace, bool, Option<bool>)]| matches!(group, [a,b] if a.1 != b.1 && a.2.zip(b.2).is_some_and(|(s,t)| s != t));
             let count = keys.chunk_by(|a, b| a.0 == b.0).filter(|g| opposite(g)).count();
             reserve_display(&mut inner, count, &mut scratch_budget)?;
             budget -= count * size_of::<IndexedFace>();
             for group in keys.chunk_by(|a, b| a.0 == b.0).filter(|g| opposite(g)) {
-                if let Some(&(face, _)) = group.first() {
+                if let Some(&(face, _, _)) = group.first() {
                     inner.push(face);
                 }
             }
@@ -626,6 +651,10 @@ mod tests {
         assert!(view.tris.iter().filter(|t| t.element == 12).all(|t| t.nodes.iter().all(|n| *n >= 4)));
         assert!(view.tris.iter().any(|t| t.element == 13 && t.nodes == [4, 5, 6]));
         assert!(DisplayMesh::from_indexed(&p, cells.into_iter(), 128).is_err());
+        p[7][2] = 2.;
+        let inverted = DisplayMesh::from_indexed(&p, cells.into_iter(), 1 << 20).unwrap();
+        assert_eq!(inverted.tris.len(), 9, "both bases remain exposed when deformation puts the apices on the same side");
+        p[7][2] = -1.;
         // A discontinuous displacement opens a gap. Both exposed solid faces return.
         for point in &mut p[4..] {
             point[2] -= 0.125;

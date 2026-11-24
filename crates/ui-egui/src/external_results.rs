@@ -161,8 +161,7 @@ mod tests {
     use fieldcraft_engine::external_view::{Cell, Field, Frame, Grid, Series};
     use std::collections::BTreeMap;
 
-    #[test]
-    fn play_reports_the_visible_frame_and_manual_seeking_pauses_it() {
+    fn app_with_frames() -> ModelApp {
         let frames = [0., 1., 4.].map(|time| Frame {
             time,
             grid: Grid { points: vec![[time, 0., 0.]], cells: vec![Cell { vtk_type: 1, points: vec![0] }] },
@@ -171,6 +170,40 @@ mod tests {
         });
         let mut app = ModelApp::new(fieldcraft_engine::Session::default());
         app.session.set_external_results(Series { frames: Vec::from(frames) }).unwrap();
+        app
+    }
+
+    #[test]
+    fn scripts_restart_playback_only_after_a_successful_playback_command() {
+        let mut app = app_with_frames();
+        let ctx = egui::Context::default();
+        let seek_and_play = json!([{"command":"results.external.view","params":{"frame":0}},{"command":"results.animate","params":{"on":true}}]);
+        let mut with_header = json!(app.session.journal_header);
+        with_header["commands"] = seek_and_play.clone();
+        for script in [seek_and_play.clone(), with_header] {
+            app.run("results.animate", json!({"on":true})).unwrap();
+            app.advance_external_playback(&ctx);
+            app.now += crate::results::PERIOD * 0.5;
+            app.advance_external_playback(&ctx);
+            assert_eq!(app.session.external_view.as_ref().unwrap().frame, 1);
+            let clock = app.external_clock;
+            app.run_script(&json!([{"command":"model.info"}])).unwrap();
+            assert_eq!(app.external_clock, clock);
+            assert!(app.run_script(&json!([{"command":"results.animate","params":{"on":"bad"}}])).is_err());
+            assert_eq!(app.external_clock, clock);
+            app.run_script(&script).unwrap();
+            app.advance_external_playback(&ctx);
+            assert_eq!(app.session.external_view.as_ref().unwrap().frame, 0);
+        }
+        let mut partial = seek_and_play;
+        partial.as_array_mut().unwrap().push(json!({"command":"no.such.command"}));
+        assert!(app.run_script(&partial).is_err());
+        assert!(app.external_clock.is_none());
+    }
+
+    #[test]
+    fn play_reports_the_visible_frame_and_manual_seeking_pauses_it() {
+        let mut app = app_with_frames();
         let ctx = egui::Context::default();
         app.run("results.animate", json!({"on":true})).unwrap();
         app.now = 50.0;

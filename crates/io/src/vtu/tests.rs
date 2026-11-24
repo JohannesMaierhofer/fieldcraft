@@ -93,12 +93,13 @@ fn appended_base64_offsets_refer_to_encoded_bytes() {
 #[test]
 fn invalid_grids_report_the_cause() {
     let good = String::from_utf8(grid(POINTS, POINT_FIELD, b"", "")).unwrap();
+    let oversized = format!(r#"NumberOfPoints="{}""#, super::MAX_POINTS + 1);
     for (from, to, message) in [
         ("3 6", "3 5", "offsets"),
         ("3 1 2", "4 1 2", "missing point"),
         ("5 5", "5 200", "cell type 200"),
         ("0 1 2 3 4 5 6 7", "0 1 2", "too few"),
-        ("NumberOfPoints=\"4\"", "NumberOfPoints=\"9999999999\"", "NumberOfPoints"),
+        ("NumberOfPoints=\"4\"", oversized.as_str(), "NumberOfPoints"),
         ("0 1 2 3 4 5 6 7", "0 1 2 3 inf 5 6 7", "finite"),
     ] {
         assert!(read(good.replace(from, to).as_bytes(), 0.).unwrap_err().to_string().contains(message), "{message}");
@@ -156,4 +157,74 @@ fn a_pvtu_indexes_exactly_one_relative_serial_piece() {
     let extra = doc.replace("</PUnstructuredGrid>", r#"<Piece Source="part1.vtu"/></PUnstructuredGrid>"#);
     assert!(single_piece(extra.as_bytes()).unwrap_err().to_string().contains("multi-piece"));
     assert!(single_piece(doc.replace(r#"<Piece Source="step/grid.VTU"/>"#, "").as_bytes()).is_err());
+}
+
+#[test]
+fn xml_markup_does_not_change_array_values_or_identify_a_payload() {
+    let ascii = String::from_utf8(grid(POINTS, POINT_FIELD, b"", "")).unwrap();
+    let xml = format!("<!-- <AppendedData> --><?note <AppendedData>?>{ascii}")
+        .replace("0 1 2 3 4 5 6 7", "0 1 2 3 4 5 6 1<!--split--><![CDATA[7]]>")
+        .replace(">3 6<", ">3<!--split--> 6<");
+    assert_eq!(read(xml.as_bytes(), 0.).unwrap().point_data["E"].values[7], 17.);
+    let raw: Vec<u8> = 32_u32.to_le_bytes().into_iter().chain((0..8).flat_map(|n| (n as f32).to_le_bytes())).collect();
+    let encoded = STANDARD.encode(&raw);
+    let (a, b) = encoded.split_at(5);
+    let field = format!(r#"<DataArray type="Float32" Name="E" NumberOfComponents="2" format="binary">{a}<!-- split a quartet -->{b}</DataArray>"#);
+    assert_eq!(read(&grid(POINTS, &field, b"", ""), 0.).unwrap().point_data["E"].values[7], 7.);
+
+    // An XML trailer can itself mention closing tags. Appended bytes have no XML encoding.
+    let mut appended = br#"<!-- <AppendedData> --><AppendedData hint="a > b" encoding="raw">_"#.to_vec();
+    appended.extend(raw);
+    appended.extend_from_slice(b"</AppendedData   ><!-- </AppendedData> -->");
+    let from_raw = r#"<DataArray type="Float32" Name="E" NumberOfComponents="2" format="appended" offset="0"/>"#;
+    assert_eq!(read(&grid(POINTS, from_raw, &appended, ""), 0.).unwrap().point_data["E"].values[7], 7.);
+}
+
+#[test]
+fn lagrange_cells_keep_their_point_order_and_all_samples_in_project_storage() {
+    // The wedge uses 0,1,2 on one triangular face and 3,4,5 directly above them.
+    // The quadratic tetrahedron has edge samples on 01,12,20,03,13,23, in that order.
+    let tetrahedron = [0, 1, 3, 4, 8, 9, 10, 11, 12, 13];
+    let cases: &[(u32, u8, &[u32])] = &[
+        (68, 3, &[0, 1]),
+        (68, 21, &[0, 1, 8]),
+        (69, 5, &[0, 1, 3]),
+        (69, 22, &[0, 1, 3, 8, 9, 10]),
+        (70, 9, &[0, 1, 2, 3]),
+        (71, 10, &tetrahedron[..4]),
+        (71, 24, &tetrahedron),
+        (72, 12, &[0, 1, 2, 3, 4, 5, 6, 7]),
+        (73, 13, &[0, 1, 3, 4, 5, 7]),
+    ];
+    let points = "0 0 0  1 0 0  1 1 0  0 1 0  0 0 1  1 0 1  1 1 1  0 1 1  0.5 0 0  0.5 0.5 0  0 0.5 0  0 0 0.5  0.5 0 0.5  0 0.5 0.5";
+    let names = |values: &[u32]| values.iter().map(u32::to_string).collect::<Vec<_>>().join(" ");
+    let ids = cases.iter().flat_map(|(_, _, nodes)| nodes.iter().copied()).collect::<Vec<_>>();
+    let offsets = cases
+        .iter()
+        .scan(0, |n, (_, _, nodes)| {
+            *n += nodes.len() as u32;
+            Some(*n)
+        })
+        .collect::<Vec<_>>();
+    let types = cases.iter().map(|c| c.0).collect::<Vec<_>>();
+    let xml = format!(
+        r#"<VTKFile type="UnstructuredGrid"><UnstructuredGrid><Piece NumberOfPoints="14" NumberOfCells="9">
+      <Points><DataArray type="Float64" NumberOfComponents="3">{points}</DataArray></Points>
+      <Cells><DataArray type="Int32" Name="connectivity">{}</DataArray><DataArray type="Int32" Name="offsets">{}</DataArray>
+      <DataArray type="UInt8" Name="types">{}</DataArray></Cells>
+      <PointData><DataArray type="UInt8" Name="sample">0 1 2 3 4 5 6 7 8 9 10 11 12 13</DataArray></PointData></Piece></UnstructuredGrid></VTKFile>"#,
+        names(&ids),
+        names(&offsets),
+        names(&types)
+    );
+    let frame = read(xml.as_bytes(), 0.).unwrap();
+    for (cell, (_, fixed, source)) in frame.grid.cells.iter().zip(cases) {
+        assert_eq!(cell.vtk_type, *fixed);
+        assert_eq!(cell.points, *source);
+    }
+    let series = crate::external::Series { frames: vec![frame] };
+    assert_eq!(crate::external::decode(&crate::external::encode(&series).unwrap()).unwrap(), series);
+    for (kind, n) in [(68, 4), (69, 10), (70, 8), (70, 9), (71, 20), (72, 20), (72, 27), (73, 18)] {
+        assert!(super::canonical_cell(kind, n).unwrap_err().to_string().contains("unsupported Lagrange"));
+    }
 }

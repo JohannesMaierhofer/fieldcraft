@@ -271,21 +271,30 @@ pub struct Keep {
 
 impl Session {
     /// The bytes of the `.fieldcraft` file holding this session's model, mesh, journal and view
-    /// (no results: what autosaves, crash and bug reports keep), with geometry paths inside
+    /// without result data (for example, in a bug report), with geometry paths inside
     /// `base` (the folder the file goes to) stored relative to it.
     pub fn file_bytes(&self, base: Option<&Path>) -> Result<Vec<u8>> {
         self.file_bytes_with(base, Keep::default())
     }
 
+    /// Recovery snapshots include imported frames, whose source may have moved or changed.
+    /// Native solver results follow the existing recovery policy and can be recomputed.
+    pub(crate) fn recovery_bytes(&self) -> Result<Vec<u8>> {
+        self.package_bytes(None, Keep::default(), self.external_results())
+    }
+
     /// [`Session::file_bytes`], keeping what `keep` says.
     pub fn file_bytes_with(&self, base: Option<&Path>, keep: Keep) -> Result<Vec<u8>> {
+        self.package_bytes(base, keep, if keep.results { self.external_results() } else { None })
+    }
+
+    fn package_bytes(&self, base: Option<&Path>, keep: Keep, external: Option<&fieldcraft_io::external::Series>) -> Result<Vec<u8>> {
         let stored = |s: &SourceFile| s.with_path(stored_path(s.path(), base));
         let geometry = Geometry {
             design: self.sources.design.as_ref().map(stored).transpose()?,
             meshes: self.sources.meshes.iter().map(stored).collect::<fieldcraft_io::Result<_>>()?,
         };
         let copies = if keep.geometry { self.geometry_copies()? } else { Vec::new() };
-        let external = if keep.results { self.external_results() } else { None };
         let external_view = match (external, self.external_view.as_ref()) {
             (Some(series), Some(view)) => {
                 view.validate(series).map_err(EngineError::Params)?;
@@ -1610,8 +1619,8 @@ mod tests {
         u.execute("model.material.edit", &json!({"name": "Mat", "elastic": {"type": "isotropic", "young": 1000, "poisson": 0}, "density": 1}))
             .unwrap();
         assert_eq!(u.result_steps().collect::<Vec<_>>(), vec![("Bend", true), ("Modes", true)]);
-        // Autosaves keep no results.
-        assert!(fieldcraft_io::read(&u.file_bytes(None).unwrap()).unwrap().results.is_empty());
+        // Autosaves omit native solver results.
+        assert!(fieldcraft_io::read(&u.recovery_bytes().unwrap()).unwrap().results.is_empty());
 
         // Results of another results encoding: the model opens without them, saying why.
         let later = with_part_edited(&std::fs::read(&path).unwrap(), "results.bin", |b| b[6..8].copy_from_slice(b"77"));

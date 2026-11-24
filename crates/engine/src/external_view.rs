@@ -105,16 +105,14 @@ impl ExternalView {
             animate: false,
         };
         if let Some(frame) = series.frames.first() {
-            view.select_default(frame);
+            view.select_default_field(frame);
         }
         view
     }
 
-    /// Pick the first drawable array in point, then cell order. Preserve a displacement
-    /// selection when its named point vector exists in this frame.
-    pub fn select_default(&mut self, frame: &Frame) {
+    /// Pick the first drawable contour in point, then cell order.
+    fn select_default_field(&mut self, frame: &Frame) {
         self.field = None;
-        self.displacement = self.displacement.take().filter(|n| frame.point_data.get(n).is_some_and(|f| matches!(f.components, 2 | 3)));
         for a in [Association::Point, Association::Cell] {
             for (name, f) in a.fields(frame) {
                 if let Some(&c) = Component::for_components(f.components).first() {
@@ -124,6 +122,27 @@ impl ExternalView {
                     return;
                 }
             }
+        }
+    }
+
+    /// Retain each inherited selection independently when a moving grid changes its
+    /// arrays or coordinates. An explicit displacement or scale is checked after applying it.
+    pub(crate) fn inherit_frame(&mut self, frame: &Frame, scale_requested: bool) {
+        if self.field.is_some() {
+            let components = self.field(frame).map_or(&[][..], |f| Component::for_components(f.components));
+            if let Some(&default) = components.first() {
+                if !components.contains(&self.component) {
+                    self.component = default;
+                }
+            } else {
+                self.select_default_field(frame);
+            }
+        }
+        if let Some(n) = &self.displacement
+            && (!frame.point_data.get(n).is_some_and(|f| matches!(f.components, 2 | 3))
+                || (!scale_requested && self.validate_displacement(frame).is_err()))
+        {
+            self.displacement = None;
         }
     }
 
@@ -156,6 +175,10 @@ impl ExternalView {
                 return Err(format!("{} is unavailable for field {name} with {} components", self.component.label(), f.components));
             }
         }
+        self.validate_displacement(frame)
+    }
+
+    fn validate_displacement(&self, frame: &Frame) -> Result<(), String> {
         if let Some(n) = &self.displacement {
             let f = frame
                 .point_data
@@ -194,20 +217,29 @@ impl ExternalView {
     }
 
     /// Hold each frame until the following recorded time is reached during playback.
-    /// Fractions use normalized times to avoid overflowing on widely separated time values.
+    /// Compare physical time differences from the selected frame so neighboring timestamps
+    /// remain distinct even when they occupy a tiny fraction of the whole series.
     pub fn playback_frame(series: &Series, start: usize, fraction: f64) -> Option<usize> {
         let first = series.frames.first()?.time;
         let last = series.frames.last()?.time;
-        let start = series.frames.get(start)?.time;
+        let origin = series.frames.get(start)?.time;
         if last <= first || !fraction.is_finite() {
             return None;
         }
         let factor = if (last - first).is_finite() { 1.0 } else { 0.5 };
-        let lo = first * factor;
-        let span = last * factor - lo;
-        let normalized = |time: f64| (time * factor - lo) / span;
-        let position = (normalized(start) + fraction.max(0.)).min(1.);
-        Some(series.frames.partition_point(|f| normalized(f.time) <= position).saturating_sub(1))
+        if fraction <= 0.0 {
+            return Some(start);
+        }
+        let elapsed = (last * factor - first * factor) * fraction.min(1.0);
+        let later = series.frames.get(start + 1..)?;
+        Some(
+            start
+                + later.partition_point(|f| {
+                    let difference = f.time - origin;
+                    let delta = if difference.is_finite() { difference * factor } else { f.time * factor - origin * factor };
+                    delta <= elapsed
+                }),
+        )
     }
     fn field<'a>(&self, frame: &'a Frame) -> Option<&'a Field> {
         self.association.fields(frame).get(self.field.as_ref()?)
@@ -578,6 +610,22 @@ mod tests {
         view.animate = true;
         series.frames[2].cell_data.clear();
         assert!(view.validate(&series).is_err());
+    }
+
+    #[test]
+    fn playback_measures_neighboring_samples_from_the_selected_time() {
+        let make = |times: [f64; 3]| {
+            let sample = fixture().frames.remove(0);
+            Series { frames: times.map(|time| Frame { time, ..sample.clone() }).into() }
+        };
+        let close = make([-1e16, 0., 1.]);
+        assert_eq!(ExternalView::playback_frame(&close, 1, 0.), Some(1));
+        assert_eq!(ExternalView::playback_frame(&close, 1, 0.5e-16), Some(1));
+        assert_eq!(ExternalView::playback_frame(&close, 1, 1e-16), Some(2));
+        let wide = make([-f64::MAX, 0., f64::MAX]);
+        assert_eq!(ExternalView::playback_frame(&wide, 0, 0.25), Some(0));
+        assert_eq!(ExternalView::playback_frame(&wide, 0, 0.5), Some(1));
+        assert_eq!(ExternalView::playback_frame(&wide, 0, 1.), Some(2));
     }
 
     #[test]

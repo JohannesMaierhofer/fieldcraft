@@ -490,6 +490,7 @@ impl Session {
         let scope = crash::Scope::enter();
         let journaled = crash::command_begin(&scope, self, id, params);
         let (revision, opened) = (self.revision, self.opened);
+        let external = journaled.then(|| (self.external_generation, self.external_view.clone()));
         // Before format 3 the geometry and mesher commands read their numbers as millimetres in a
         // model built on a design or 3MF meshes, whatever it declared: a replayed journal from
         // then is read so. One that acted on a block typed in another unit cannot be replayed
@@ -556,7 +557,10 @@ impl Session {
             self.refresh_results();
         }
         drop(scope);
-        crash::command_done(self, journaled, self.revision != revision || self.opened != opened, id, params, &result);
+        let changed = self.revision != revision
+            || self.opened != opened
+            || external.is_some_and(|(generation, view)| generation != self.external_generation || view != self.external_view);
+        crash::command_done(self, journaled, changed, id, params, &result);
         result
     }
 
@@ -567,6 +571,12 @@ impl Session {
     /// Returns each step's output, in order. Other fields of a step (such as an `id` naming it)
     /// are left to the caller.
     pub fn run_script(&mut self, script: &Value) -> Result<Vec<Value>> {
+        self.run_script_with(script, |_| ())
+    }
+
+    /// Run a script and notify the caller after each successful command. If a later
+    /// command fails, the earlier notifications match the changes the session kept.
+    pub fn run_script_with(&mut self, script: &Value, mut succeeded: impl FnMut(&str)) -> Result<Vec<Value>> {
         let (steps, header) = match script {
             Value::Array(steps) => (steps, None),
             Value::Object(o) => {
@@ -609,7 +619,10 @@ impl Session {
                 fieldcraft_io::migrate::format_2_defaults(id, &mut params, system);
             }
             match self.execute(id, &params) {
-                Ok(v) => outputs.push(v),
+                Ok(v) => {
+                    outputs.push(v);
+                    succeeded(id);
+                }
                 Err(e) => {
                     failed = Some(EngineError::Params(format!("step {} ({id}): {e}", i + 1)));
                     break;
