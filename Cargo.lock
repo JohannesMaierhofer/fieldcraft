@@ -2086,12 +2086,15 @@ dependencies = [
 name = "fieldcraft-io"
 version = "0.8.1"
 dependencies = [
+ "base64 0.22.1",
  "fieldcraft-explicit",
  "fieldcraft-lbm",
  "fieldcraft-mesh",
  "fieldcraft-model",
  "fieldcraft-solver",
+ "flate2",
  "log",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2 0.11.1",
