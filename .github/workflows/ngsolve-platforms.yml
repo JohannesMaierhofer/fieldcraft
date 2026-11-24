@@ -1,12 +1,20 @@
 name: External solver installers
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to package
+        type: choice
+        options: [linux, windows, both]
+        default: linux
 permissions:
   contents: read
 jobs:
   windows:
+    if: inputs.platform != 'linux'
     uses: ./.github/workflows/ngsolve-r4-windows.yml
   linux:
+    if: inputs.platform != 'windows'
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     env:
@@ -14,7 +22,7 @@ jobs:
       CARGO_PROFILE_RELEASE_LTO: 'false'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
       FIELDCRAFT_TELEMETRY: '0'
-      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r4
+      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r5
       FIELDCRAFT_BUILD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -32,12 +40,15 @@ jobs:
       - name: Install the package and exercise analysis and playback
         shell: pwsh
         run: ./packaging/ngsolve/verify.ps1 -Label linux-x64
+      - name: Import VTU results and reopen the embedded time series
+        shell: pwsh
+        run: ./packaging/ngsolve/verify-vtu.ps1 -Cli /usr/bin/fieldcraft-ngsolve-cli -OutputDir verification
       - name: Install the package in clean Ubuntu and repeat the analysis
         run: |
           docker run --rm -v "$PWD/dist/ngsolve:/packages:ro" -v "$PWD/verification:/fixtures:ro" ubuntu:22.04 bash -ec '
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /packages/*.deb
-            test "$(fieldcraft-ngsolve-cli --version)" = "fieldcraft-cli 0.8.1-ngsolve.r4"
+            test "$(fieldcraft-ngsolve-cli --version)" = "fieldcraft-cli 0.8.1-ngsolve.r5"
             mkdir /tmp/slab && cd /tmp/slab
             cp /fixtures/slab.json /fixtures/slab.analysis.json /fixtures/potential.py .
             fieldcraft-ngsolve-cli run slab.json

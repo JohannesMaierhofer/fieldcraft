@@ -3,7 +3,7 @@ param([Parameter(Mandatory)][ValidateSet('x64','arm64')][string]$Arch)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
-$setup = Join-Path $root "dist/ngsolve/FieldCraft-NGSolve-0.8.1-r4-windows-$Arch-network.exe"
+$setup = Join-Path $root "dist/ngsolve/FieldCraft-NGSolve-0.8.1-r5-windows-$Arch-network.exe"
 $work = Join-Path $env:RUNNER_TEMP ("fieldcraft-windows-qa-" + [guid]::NewGuid().ToString('N'))
 $dest = Join-Path $work 'Installed FieldCraft'
 $proof = Join-Path $root 'verification'
@@ -28,7 +28,7 @@ if ($generations.Count -ne 1) { throw 'Expected one installed generation.' }
 $app = $generations[0].FullName
 $receipt = Get-Content "$app/identity.json" -Raw | ConvertFrom-Json
 if ($receipt.arch -ne $Arch -or $receipt.desktop -cne $env:FIELDCRAFT_BUILD_SHA -or
-    $receipt.installer_revision -ne 'r4' -or $receipt.desktop_version -ne $env:FIELDCRAFT_VERSION -or
+    $receipt.installer_revision -ne 'r5' -or $receipt.desktop_version -ne $env:FIELDCRAFT_VERSION -or
     $generations[0].Name -cne ('g-' + $receipt.generation)) { throw 'Incorrect installed desktop identity.' }
 $launcher = "$app/fieldcraft-ngsolve.cmd"
 $cli = "$app/fieldcraft-cli.exe"
@@ -81,5 +81,6 @@ try {
     & $cli run result/view-2.json
     Copy-Item result/results.json "$proof/capacitor-results.json"
     Copy-Item "$app/identity.json" "$proof/identity.json"
+    & "$PSScriptRoot/../verify-vtu.ps1" -Cli $cli -OutputDir $proof
     & "$PSScriptRoot/../verify-series.ps1" -Python $python -Cli $cli -Gui $gui -Launcher $launcher -OutputDir $proof
 } finally { Pop-Location }

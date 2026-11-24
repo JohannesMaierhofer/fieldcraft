@@ -7,7 +7,7 @@ packaging/macos/ngsolve-package.sh --arch x86_64 \
   --app dist/FieldCraft.app --output dist/FieldCraft-NGSolve-intel.pkg
 ```
 
-For a numbered release, pass `--package-version 0.8.1.4` and `--desktop-revision <full-commit-sha>`. The packager verifies the app's recorded commit, both executable architectures, and the app signature.
+For a numbered release, pass `--package-version 0.8.1.5` and `--desktop-revision <full-commit-sha>`. The packager verifies the app's recorded commit, both executable architectures, and the app signature.
 
 For Apple Silicon, pass `--arch arm64` and an arm64 or universal application. `/Library/Application Support/FieldCraft/NGSolve/python/bin/python3` is the stable executable path for external analysis scripts. `-I` runs it with user site-packages and `PYTHONPATH` disabled. The installer provides NGSolve, Netgen, OCCT, NumPy, and uv. In **External Analysis**, use **Open Python Workspace** to run scripts and **Settings** to install project packages. [Python Workspace](../../../docs/python-workspace.md)
 

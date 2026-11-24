@@ -4,13 +4,13 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
 $sha = (git -C $root rev-parse HEAD).Trim()
-if ($sha -cne $env:FIELDCRAFT_BUILD_SHA -or $env:FIELDCRAFT_VERSION -cne '0.8.1-ngsolve.r4') {
+if ($sha -cne $env:FIELDCRAFT_BUILD_SHA -or $env:FIELDCRAFT_VERSION -cne '0.8.1-ngsolve.r5') {
     throw 'The release version and desktop revision must match this checkout.'
 }
 $target = @{x64='x86_64-pc-windows-msvc'; arm64='aarch64-pc-windows-msvc'}[$Arch]
 $bin = Join-Path $env:CARGO_TARGET_DIR "$target/release"
 $out = Join-Path $root 'dist/ngsolve'
-$work = Join-Path ([IO.Path]::GetTempPath()) ("fieldcraft-r4-" + [guid]::NewGuid().ToString('N'))
+$work = Join-Path ([IO.Path]::GetTempPath()) ("fieldcraft-r5-" + [guid]::NewGuid().ToString('N'))
 $stage = Join-Path $work 'payload'
 New-Item -ItemType Directory -Force "$stage/licenses","$stage/examples",$out | Out-Null
 
@@ -27,7 +27,7 @@ foreach ($name in 'fieldcraft.exe','fieldcraft-cli.exe') { Copy-Item "$bin/$name
 foreach ($name in 'LICENSE-MIT','LICENSE-APACHE','NOTICE','THIRD-PARTY-LICENSES.txt') { Copy-Item "$root/$name" "$stage/licenses" }
 foreach ($name in 'runtime-lock.json','SOLVER-NOTICES.txt','fieldcraft-ngsolve.cmd') { Copy-Item "$PSScriptRoot/../$name" $stage }
 Copy-Item "$PSScriptRoot/install.ps1" $stage
-Copy-Item "$PSScriptRoot/INSTALL-r4.txt" "$stage/INSTALL.txt"
+Copy-Item "$PSScriptRoot/INSTALL-workspace.txt" "$stage/INSTALL.txt"
 & "$PSScriptRoot/../fixtures.ps1" -Directory "$work/fixtures" -Scenario electrostatic
 foreach ($name in 'slab.json','slab.analysis.json','potential.py') { Copy-Item "$work/fixtures/$name" "$stage/examples" }
 
@@ -39,7 +39,7 @@ foreach ($file in (Get-ChildItem -File -Recurse $stage | Sort-Object FullName)) 
 $receipt = [ordered]@{
     arch = $Arch
     desktop = $sha
-    installer_revision = 'r4'
+    installer_revision = 'r5'
     desktop_version = $env:FIELDCRAFT_VERSION
     runtime_lock_sha256 = $files['runtime-lock.json']
     installer_script_sha256 = (Get-FileHash "$stage/install.ps1").Hash.ToLowerInvariant()
@@ -49,8 +49,8 @@ $receiptPath = Join-Path $stage 'identity.json'
 $receipt | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8NoBOM $receiptPath
 $receipt['generation'] = (Get-FileHash $receiptPath).Hash.Substring(0,32).ToLowerInvariant()
 $receipt | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8NoBOM $receiptPath
-$name = "FieldCraft-NGSolve-0.8.1-r4-windows-$Arch-network.exe"
-& "$nsis/makensis.exe" /V2 /DREVISION=4 "/DARCH=$Arch" "/DPAYLOAD=$stage" "/DOUTPUT=$out/$name" "$PSScriptRoot/setup.nsi"
+$name = "FieldCraft-NGSolve-0.8.1-r5-windows-$Arch-network.exe"
+& "$nsis/makensis.exe" /V2 /DREVISION=5 "/DARCH=$Arch" "/DPAYLOAD=$stage" "/DOUTPUT=$out/$name" "$PSScriptRoot/setup.nsi"
 Copy-Item "$stage/SOLVER-NOTICES.txt" $out
 $hash = (Get-FileHash "$out/$name").Hash.ToLowerInvariant()
 "$hash  $name" | Set-Content -Encoding ascii "$out/$name.sha256"

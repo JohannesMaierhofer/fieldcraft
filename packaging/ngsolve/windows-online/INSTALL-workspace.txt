@@ -1,4 +1,4 @@
-FieldCraft with NGSolve for Windows, 0.8.1-r4
+FieldCraft with NGSolve for Windows, 0.8.1-r5
 
 Install the file for your Windows architecture. On Windows 11 ARM64 the
 desktop and CLI run natively and Windows emulates the x64 solver process.

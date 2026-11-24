@@ -7,6 +7,12 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
 revision=$(git -C "$repo" rev-parse HEAD)
 [[ $(dpkg --print-architecture) == amd64 && $FIELDCRAFT_BUILD_SHA == "$revision" ]]
+if [[ ! $FIELDCRAFT_VERSION =~ ^([0-9]+\.[0-9]+\.[0-9]+)-ngsolve\.(r[1-9][0-9]*)$ ]]; then
+    echo "Invalid FieldCraft NGSolve release version: $FIELDCRAFT_VERSION" >&2
+    exit 2
+fi
+base_version=${BASH_REMATCH[1]}
+release_revision=${BASH_REMATCH[2]}
 for name in fieldcraft fieldcraft-cli; do
     [[ $("$bin/$name" --version) == "$name $FIELDCRAFT_VERSION" ]]
 done
@@ -32,13 +38,13 @@ printf 'Source: fieldcraft-ngsolve\n\nPackage: fieldcraft-ngsolve-network\nArchi
 deps=$(dpkg-shlibdeps -O -e"$base/fieldcraft" -e"$base/fieldcraft-cli")
 [[ $deps == shlibs:Depends=* ]]
 sed -e 's/^Package: .*/Package: fieldcraft-ngsolve-network\nConflicts: fieldcraft-ngsolve\nReplaces: fieldcraft-ngsolve\nProvides: fieldcraft-ngsolve/' \
-    -e 's/^Version: .*/Version: 0.8.1+ngsolve2608.r4-1/' \
+    -e "s/^Version: .*/Version: ${base_version}+ngsolve2608.${release_revision}-1/" \
     -e "/^Depends:/s/\$/, curl, ca-certificates, jq, libxcursor1, libxi6, libxrandr2, libxkbcommon-x11-0, ${deps#shlibs:Depends=}/" \
     "$here/../control" > "$pkg/DEBIAN/control"
 printf 'Desktop %s\nVersion %s\n' "$revision" "$FIELDCRAFT_VERSION" > "$base/BUILD.txt"
 cd "$repo"
 mkdir -p dist/ngsolve
-out=dist/ngsolve/FieldCraft-NGSolve-0.8.1-r4-linux-x64-network.deb
+out="dist/ngsolve/FieldCraft-NGSolve-${base_version}-${release_revision}-linux-x64-network.deb"
 dpkg-deb --root-owner-group -Zgzip -z3 --build "$pkg" "$out"
 cp "$base/SOLVER-NOTICES.txt" dist/ngsolve/
 (cd dist/ngsolve && sha256sum "$(basename "$out")" > "$(basename "$out").sha256")

@@ -1,8 +1,8 @@
 # FieldCraft with an external NGSolve runtime
 
-R4 installs FieldCraft and downloads its private, checksummed Python runtime on Windows, Linux, and macOS. [Downloads](https://github.com/Maierhofer-Technology/fieldcraft/releases/latest) · [macOS packaging](../macos/ngsolve/README.md)
+R5 installs FieldCraft and downloads its private, checksummed Python runtime on Windows, Linux, and macOS. [Downloads](https://github.com/Maierhofer-Technology/fieldcraft/releases/latest) · [macOS packaging](../macos/ngsolve/README.md)
 
-The Windows installer sets up FieldCraft for the current user. Start it from the Start menu. The Linux amd64 package supports Ubuntu 22.04 or later. Install it with `sudo apt install ./FieldCraft-NGSolve-0.8.1-r4-linux-x64-network.deb` and select **FieldCraft with NGSolve** from the applications menu. Both installers include the application and command-line interface. On Linux, apt resolves the system graphics libraries.
+The Windows installer sets up FieldCraft for the current user. Start it from the Start menu. The Linux amd64 package supports Ubuntu 22.04 or later. Install it with `sudo apt install ./FieldCraft-NGSolve-0.8.1-r5-linux-x64-network.deb` and select **FieldCraft with NGSolve** from the applications menu. Both installers include the application and command-line interface. On Linux, apt resolves the system graphics libraries.
 
 | Installer | Native FieldCraft app and CLI | External solver |
 |---|---|---|

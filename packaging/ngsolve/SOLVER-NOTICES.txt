@@ -4,7 +4,7 @@ The desktop application runs this solver in a separate Python process. Its numer
 
 Package contents and matching sources
 
-The R4 network installers for macOS, Windows, and Linux download the original runtime archives from their publishers during setup. Each installer records the download URLs and SHA-256 digests in runtime.lock (macOS) or runtime-lock.json (Windows and Linux). Windows on Arm uses x64 emulation for the solver wheels. The optional offline packages include their runtime archives or an installed private runtime.
+The R5 network installers for macOS, Windows, and Linux download the original runtime archives from their publishers during setup. Each installer records the download URLs and SHA-256 digests in runtime.lock (macOS) or runtime-lock.json (Windows and Linux). Windows on Arm uses x64 emulation for the solver wheels. The optional offline packages include their runtime archives or an installed private runtime.
 
 • CPython 3.13.18 from python-build-standalone 20261110. The interpreter carries the Python licence and pip's own distribution notices. For the interpreter, bundled native dependencies and build configuration, consult the tagged source and the matching full distribution's PYTHON.json and licenses/ records.
   https://github.com/astral-sh/python-build-standalone/releases/tag/20261110

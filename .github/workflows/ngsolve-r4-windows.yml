@@ -1,7 +1,17 @@
-name: Windows NGSolve R4 network installers
+name: Windows NGSolve R5 network installers
 on:
   workflow_dispatch:
+    inputs:
+      arch:
+        description: Windows architecture to build and verify
+        type: choice
+        options: [arm64, x64, both]
+        default: arm64
   workflow_call:
+    inputs:
+      arch:
+        type: string
+        default: both
 permissions:
   contents: read
 jobs:
@@ -9,17 +19,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-2025
-            arch: x64
-            target: x86_64-pc-windows-msvc
-          - os: windows-11-arm
-            arch: arm64
-            target: aarch64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
+        arch: ${{ fromJSON(inputs.arch == 'arm64' && '["arm64"]' || inputs.arch == 'x64' && '["x64"]' || '["x64","arm64"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'windows-2025' }}
     timeout-minutes: 240
     env:
-      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r4
+      RUST_TARGET: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r5
       FIELDCRAFT_BUILD_SHA: ${{ github.sha }}
       FIELDCRAFT_TELEMETRY: '0'
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
@@ -35,26 +40,26 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ env.RUST_TARGET }}
       - name: Build the native desktop and CLI
-        run: cargo build --release --locked --target ${{ matrix.target }} -p fieldcraft -p fieldcraft-cli
+        run: cargo build --release --locked --target ${{ env.RUST_TARGET }} -p fieldcraft -p fieldcraft-cli
       - name: Collect dependency licenses
         run: cargo run --release --locked -p xtask -- licences
       - name: Build the per-user network installer
-        run: ./packaging/ngsolve/windows-online/package-r4.ps1 -Arch '${{ matrix.arch }}'
+        run: ./packaging/ngsolve/windows-online/package-network.ps1 -Arch '${{ matrix.arch }}'
       - name: Install, repair, solve and display results
-        run: ./packaging/ngsolve/windows-online/verify-r4.ps1 -Arch '${{ matrix.arch }}'
+        run: ./packaging/ngsolve/windows-online/verify-network.ps1 -Arch '${{ matrix.arch }}'
       - name: Upload the tested installer and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: fieldcraft-ngsolve-r4-windows-${{ matrix.arch }}
+          name: fieldcraft-ngsolve-r5-windows-${{ matrix.arch }}
           path: dist/ngsolve/*
           compression-level: 0
           if-no-files-found: error
       - name: Upload the installed desktop identity and numerical checks
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: fieldcraft-ngsolve-r4-windows-${{ matrix.arch }}-verification
+          name: fieldcraft-ngsolve-r5-windows-${{ matrix.arch }}-verification
           path: |
             verification/*.json
             verification/*.png

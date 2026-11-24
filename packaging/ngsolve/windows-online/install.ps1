@@ -5,6 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# NSIS launches Windows PowerShell 5.1, including when its parent uses PowerShell 7.
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
 
 function Assert-Hash([string]$Path, [string]$Expected) {
     if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $Expected) {
@@ -128,7 +130,7 @@ function Initialize-Preferences {
 $ProgressPreference = 'SilentlyContinue'
 $identity = Get-Content -LiteralPath "$PSScriptRoot\identity.json" -Raw | ConvertFrom-Json
 Assert-Hash "$PSScriptRoot\runtime-lock.json" $identity.runtime_lock_sha256
-if ($identity.installer_revision -notin 'r2','r4') { throw 'Unknown installer revision.' }
+if ($identity.installer_revision -notin 'r2','r4','r5') { throw 'Unknown installer revision.' }
 $legacyBridge = $identity.installer_revision -eq 'r2'
 $generationPattern = if ($legacyBridge) { '^[a-z2-7]{52}$' } else { '^[0-9a-f]{32}$' }
 if ($identity.generation -cnotmatch $generationPattern) { throw 'Invalid package generation identifier.' }

@@ -49,9 +49,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     env:
-      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r4
+      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r5
       FIELDCRAFT_BUILD_SHA: ${{ github.sha }}
-      INSTALLER: FieldCraft-NGSolve-0.8.1-r4-${{ matrix.label }}.pkg
+      INSTALLER: FieldCraft-NGSolve-0.8.1-r5-${{ matrix.label }}.pkg
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
       CARGO_PROFILE_RELEASE_LTO: 'false'
@@ -97,7 +97,7 @@ jobs:
           app="$RUNNER_TEMP/target/macos-package/FieldCraft.app"
           mkdir -p dist
           cp packaging/ngsolve/SOLVER-NOTICES.txt dist/
-          packaging/macos/ngsolve-package.sh --arch "$ARCH" --app "$app" --output "dist/$INSTALLER" --package-version 0.8.1.4 --desktop-revision "$GITHUB_SHA"
+          packaging/macos/ngsolve-package.sh --arch "$ARCH" --app "$app" --output "dist/$INSTALLER" --package-version 0.8.1.5 --desktop-revision "$GITHUB_SHA"
           (cd dist && shasum -a 256 "$INSTALLER" > "$INSTALLER.sha256")
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -112,7 +112,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           sudo /usr/sbin/installer -pkg "dist/$INSTALLER" -target /
-          pkgutil --pkg-info org.tangency-labs.fieldcraft.app | grep -Fx 'version: 0.8.1.4'
+          pkgutil --pkg-info org.tangency-labs.fieldcraft.app | grep -Fx 'version: 0.8.1.5'
           home="/Library/Application Support/FieldCraft/NGSolve"
           cmp "packaging/macos/ngsolve/$ARCH.lock" "$home/current/runtime.lock"
           cmp dist/SOLVER-NOTICES.txt "$home/current/NOTICE.txt"
@@ -137,6 +137,7 @@ jobs:
         run: |
           $fcRuntime = '/Library/Application Support/FieldCraft/NGSolve'
           $fcApp = '/Applications/FieldCraft.app/Contents/MacOS'
+          ./packaging/ngsolve/verify-vtu.ps1 -Cli "$fcApp/fieldcraft-cli" -OutputDir "$PWD/verification"
           ./packaging/ngsolve/verify-series.ps1 -Python "$fcRuntime/python/bin/python3" -Cli "$fcApp/fieldcraft-cli" -Gui "$fcApp/FieldCraft" -Launcher "$fcRuntime/fieldcraft-ngsolve" -OutputDir "$PWD/verification"
       - name: Upload measured time series, playback states and window captures
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

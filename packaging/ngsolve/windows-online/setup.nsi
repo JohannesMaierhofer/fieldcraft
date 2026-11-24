@@ -31,7 +31,7 @@ Section
   File "INSTALL.txt"
   File "fieldcraft-ngsolve.cmd"
   File "install.ps1"
-  !if ${REVISION} == 4
+  !if ${REVISION} >= 4
     SetOutPath "$PLUGINSDIR\payload\examples"
     !cd "examples"
     File "slab.json"
