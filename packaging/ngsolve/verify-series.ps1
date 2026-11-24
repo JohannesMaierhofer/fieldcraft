@@ -88,6 +88,27 @@ proof = dict(opened=opened, range_from_solver=expected_range, first=first, scrub
              renderer=state.get('renderer'), adapter=state.get('adapter'))
 (out/'diffusion-playback.json').write_text(json.dumps(proof,indent=2),encoding='utf-8')
 print(json.dumps(proof,ensure_ascii=True))
+
+# Open the Python Workspace from the installed desktop's ribbon action and
+# repeat the analysis with the interpreter it discovers for this installation.
+model = Path('diffusion.fieldcraft').resolve(strict=True)
+definition = Path('slab.analysis.json').resolve(strict=True)
+rpc('engine.execute', dict(command='file.open', params=dict(path=str(model))))
+rpc('ui.start', dict(command='ui.python'))
+workspace = rpc('ui.python', dict(inspect=True))
+assert workspace['open'] and Path(workspace['project']).samefile(definition.parent), workspace
+rpc('ui.python.run', dict(path=str(definition)))
+deadline = time.monotonic() + 180
+while (workspace := rpc('ui.python', dict(inspect=True)))['job_running']:
+    if time.monotonic() > deadline:
+        raise TimeoutError('Python Workspace analysis did not finish')
+    time.sleep(.25)
+assert not workspace['error'] and workspace['last_result'], workspace
+manifest = Path(workspace['last_result']).resolve(strict=True)
+workspace_result = json.loads(manifest.read_text(encoding='utf-8'))
+assert [item['name'] for item in workspace_result['series']] == ['B'], workspace_result
+(out/'python-workspace.json').write_text(json.dumps(workspace,indent=2),encoding='utf-8')
+rpc('ui.capture', dict(path=str(out/'python-workspace.png'),width=1200,height=760,scale=1))
 '@
         & $Python -c $check $port $OutputDir
     } finally {
