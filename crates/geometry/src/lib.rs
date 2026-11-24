@@ -333,9 +333,24 @@ impl Shape {
     /// size is asked: the volume mesher grades its own; the surface gives the shape.
     fn analysis_mesh(&self, tolerance: f64) -> Result<SurfaceMesh> {
         let record = self.body.record();
-        let spec = solidcore_tess::MeshSpec { chord: tolerance, size: None, min_angle: TESS_MIN_ANGLE };
         let size = self.body.size();
-        let (plan, stats) = guard("tessellate", || solidcore_tess::mesh(record, &spec, size, None).map_err(KernelError::from))?;
+        let mesh = |chord| {
+            let spec = solidcore_tess::MeshSpec { chord, size: None, min_angle: TESS_MIN_ANGLE };
+            guard("tessellate", || solidcore_tess::mesh(record, &spec, size, None).map_err(KernelError::from))
+        };
+        let (mut plan, mut stats) = mesh(tolerance)?;
+        // A trimmed face and its shared edge are each approximated by chords. At a
+        // displaced boundary their deviations can add. Split the chord budget equally
+        // and retry once, only for a measured residual with no sampling or resource limit.
+        let mut residuals = stats.over_tolerance.iter().filter(|face| !face.within).peekable();
+        if residuals.peek().is_some()
+            && residuals.all(|face| face.caps.is_empty() && face.unmeasured == 0 && face.sag.is_finite() && face.sag > face.tol)
+            && stats.edges_capped.is_empty()
+            && stats.unmeshed.is_empty()
+            && stats.unsampled_edges.is_empty()
+        {
+            (plan, stats) = mesh(0.5 * tolerance)?;
+        }
         let name = |face: usize| {
             let v = if self.face_map.is_empty() { Some(face) } else { self.face_map.get(face).map(|&v| v as usize) };
             v.and_then(|v| self.faces.get(v)).map_or_else(|| format!("#{face}"), |f| format!("`{}`", f.name))
