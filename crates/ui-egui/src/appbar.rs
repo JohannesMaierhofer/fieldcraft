@@ -32,7 +32,6 @@ const HANDLES: app_bar::Handles<'static> = app_bar::Handles {
     home_rect: &["app_bar:home"],
     file: &["app_bar:file"],
     file_rect: &["app_bar:file"],
-    plugins: "app_bar:plugins",
     button: &["app_bar:"],
     separator: "app_bar:separator:",
     search: "ribbon:search",
@@ -88,10 +87,6 @@ fn release_notes() -> String {
     fieldcraft_update::RELEASES_URL.to_string()
 }
 
-/// The name the kit's bar reads the offer span's drawn width under (`app_bar::show`, SolidCraft's
-/// Update pill's handle): FieldCraft publishes Solve and its Update pill's room there.
-const KIT_OFFER: &str = "titlebar:update";
-
 /// Solve's label and icon: the kit's primary icon-label action.
 const SOLVE: &str = "Solve";
 const SOLVE_ICON: &str = "play";
@@ -124,13 +119,14 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
     let button = |id, icon, tip, enabled, wide_only| BarButton { id, icon, tip, enabled, narrow: true, wide_only };
     let chrome = |id, icon, tip| BarButton { id, icon, tip, enabled: true, narrow: false, wide_only: false };
     let data = app_bar::AppBar {
+        items: None,
+        quick_ids: &["theme"],
+        leading: None,
         mark: &mark,
         name: "FieldCraft",
         home: chrome("home", "home", "Start: new, open, recent files and samples"),
         file: "File",
         file_open: app.ui.menu.as_deref() == Some("file"),
-        // FieldCraft runs no plugins.
-        plugins: None,
         actions: vec![
             button("save", "save", &save_tip, !busy, false),
             button("undo", "undo", &undo_tip, undo > 0 && !busy, true),
@@ -144,18 +140,13 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
             tip: "Report a bug: draft a GitHub issue with the version, the OS and the last error; nothing is sent until you submit it",
             icon_only: false,
         },
-        pills: crate::links::pills(&app.prefs, r.width() >= app_bar::PILL_LABEL_MIN),
+        pills: crate::links::pills(&app.prefs),
         search: false,
         search_shortcut: None,
         assistant: false,
         version: Some(app_bar::Version { text: &version, url: &url }),
         handles: HANDLES,
     };
-    // What the bar drew in the kit's offer span last frame (Solve, the Update pill), where the kit
-    // reads it, so it puts the link pills left of it as it does SolidCraft's Update pill.
-    if app.offer_drawn > 0.0 {
-        solidcraft_ui_registry::publish_rect(KIT_OFFER, Rect::from_min_size(pos2(r.left(), r.top()), vec2(app.offer_drawn, r.height())));
-    }
     let out = app_bar::show(ui, &data, r, content);
     // The kit's buttons, where it published them this frame (`ui.inspect`'s layout).
     for region in
@@ -201,8 +192,8 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
                 }
             }
             BarAction::HidePill { id } => app.hide_link(id),
-            // The bar shows no Plugins button (`plugins: None`).
-            BarAction::Plugins { .. } => {}
+            // The default layout has no host-defined app menu items.
+            BarAction::App { .. } => {}
         }
     }
     let cy = r.center().y;
@@ -215,29 +206,29 @@ fn bar(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, content: Rect) {
         }
         app.place("app_bar:theme", rect);
     }
-    // An update on offer: SolidCraft's Update pill at the offer span's right end, before the
-    // right cluster; Solve goes left of it.
-    let k = solidcraft_theme::Tokens::get();
-    let mut offer = out.offer;
-    if let Some(pill) = update_pill(app, ui, offer, out.offer_labeled) {
-        offer.max.x = pill.left() - 8.0;
+    // The kit gives the document the flexible span between its two control groups.
+    // Leave room for its tab and +, then fit Solve and the optional update at the right.
+    let gap = kit::app_bar_layout::application::GAP;
+    let solve_icon = kit::icon_label_width(ui, "", Some(SOLVE_ICON), true);
+    let solve_full = kit::icon_label_width(ui, SOLVE, Some(SOLVE_ICON), true);
+    let actions_start = out.tabs_start + TAB_MIN + TAB_STRIP_ROOM + gap;
+    let mut tabs_end = out.tabs_end;
+    let update_span = Rect::from_min_max(pos2(actions_start + solve_icon + gap, r.top()), pos2(tabs_end, r.bottom()));
+    if update_span.is_positive()
+        && let Some(pill) = update_pill(app, ui, update_span)
+    {
         app.place("app_bar:update", pill);
+        tabs_end = pill.left() - gap;
     }
-    // Solve: right-aligned where the kit leaves room for an offer pill, before the right cluster.
-    let solve_w = kit::icon_label_width(ui, if out.offer_labeled { SOLVE } else { "" }, Some(SOLVE_ICON), true);
-    let solve = Rect::from_center_size(pos2(offer.right() - solve_w / 2.0, cy), vec2(solve_w, k.control_height));
-    let drawn_left = if offer.width() >= solve_w {
-        solve_button(app, ui, solve, out.offer_labeled);
+    let room = tabs_end - actions_start;
+    if room >= solve_icon {
+        let labeled = room >= solve_full;
+        let width = if labeled { solve_full } else { solve_icon };
+        let solve = Rect::from_center_size(pos2(tabs_end - width / 2.0, cy), vec2(width, solidcraft_theme::Tokens::get().control_height));
+        solve_button(app, ui, solve, labeled);
         app.place("app_bar:solve", solve);
-        solve.left()
-    } else {
-        offer.right()
-    };
-    // Room the offer span's contents take from its right end, with the gap the kit keeps before
-    // the pills (it adds its own `+ 4`); none when nothing is drawn there.
-    app.offer_drawn = if drawn_left < out.offer.right() { out.offer.right() - drawn_left } else { 0.0 };
-    // The document tab ends before the pills, or before Solve when there are none.
-    let tabs_end = drawn_left.min(out.controls_left) - 8.0;
+        tabs_end = solve.left() - gap;
+    }
     document_tab(app, ui, r, out.tabs_start, tabs_end);
     let help_at = solidcraft_ui_registry::rect_of("app_bar:help").unwrap_or(r);
     crate::frame::menu(app, ui, "file", out.file, crate::files::file_menu);
@@ -256,7 +247,7 @@ const PILL_TAB_ROOM: f32 = 300.0;
 /// end of `span` reading "Update to X", or "Update" when the document tab would be squeezed, or
 /// its icon alone in a narrow bar. A click opens the update menu ([`crate::updates::offer_menu`]).
 /// None when nothing is on offer or there is no room.
-fn update_pill(app: &mut ModelApp, ui: &mut egui::Ui, span: Rect, labeled: bool) -> Option<Rect> {
+fn update_pill(app: &mut ModelApp, ui: &mut egui::Ui, span: Rect) -> Option<Rect> {
     use crate::updates::Offer;
     let offer = crate::updates::offer(app)?;
     let (full, tip) = match &offer {
@@ -268,7 +259,7 @@ fn update_pill(app: &mut ModelApp, ui: &mut egui::Ui, span: Rect, labeled: bool)
     let font = FontId::proportional(k.font_label);
     let (icon_x, text_x, right_pad) = (16.0, 29.0, 11.0);
     let labels = [full.as_str(), "Update"];
-    let label = labels.iter().enumerate().filter(|_| labeled).find_map(|(i, text)| {
+    let label = labels.iter().enumerate().find_map(|(i, text)| {
         let width = text_x + ui.painter().layout_no_wrap(text.to_string(), font.clone(), k.app_bar_text).size().x + right_pad;
         let room = if i + 1 < labels.len() { span.width() - PILL_TAB_ROOM } else { span.width() };
         (width <= room).then_some((*text, width))
@@ -343,11 +334,12 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
         }
     }
     let close_key = shortcut("W");
-    let menu = [app_bar::TabMenuRow { id: "close", label: "Close", key_on_selected: &close_key, needs_others: false }];
+    let menu = [app_bar::TabMenuRow::new("close", "Close", &close_key)];
     let mut strip = app_bar::TabStrip {
-        tabs: vec![app_bar::DocTab { name: &name, list_name: &name, dirty, place: &place, security: None }],
+        tabs: vec![app_bar::DocTab { name: &name, list_name: &name, dirty, place: &place, security: None, views: &[] }],
         selected: 0,
         shown_selected: (!app.start_shown()).then_some(0),
+        pop_out: false,
         title_bar: true,
         double_click_renames: false,
         rename: None,
@@ -358,6 +350,24 @@ fn document_tab(app: &mut ModelApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32
         new_tip: "New model (File › New)",
         id: egui::Id::unique("fc_document_tabs"),
         handles: TAB_HANDLES,
+        // FieldCraft shows a single document tab for the active model.
+        views_as_tabs: false,
+        switcher_always: false,
+        clear_view_tabs: false,
+        view_text: app_bar::ViewText::default(),
+        view_menu: &[],
+        view_right_row: "",
+        view_rename_row: "",
+        view_rename: None,
+        plus_menu: &[],
+        layout_menu: &[],
+        view_layout: None,
+        layout_current: "",
+        layout_tip: "",
+        layout_fill: "",
+        layout_fill_heading: "",
+        switcher_menu: &[],
+        tear_off_below: 0.0,
     };
     // The strip's hit regions stay clear of what is right of it.
     let room = Rect::from_min_max(pos2(x0, r.top()), pos2(x1, r.bottom()));
@@ -391,6 +401,11 @@ const TAB_HANDLES: app_bar::TabHandles<'static> = app_bar::TabHandles {
     rename: "document_tab_rename",
     menu_row: "document_tab_menu:",
     more_row: "document_tabs_more:",
+    view: "document_view:",
+    view_close: "document_view_close:",
+    view_new: "document_view_new",
+    view_more: "document_views_more",
+    switcher: "document_view_switcher",
 };
 
 /// The shortcut text with this platform's command key.
@@ -612,7 +627,7 @@ mod tests {
         }
     }
 
-    /// The Discord link appears between the document tab and Solve.
+    /// The kit draws the Discord link between FieldCraft's Solve action and Report a Bug.
     #[test]
     fn the_community_pills_sit_before_report_a_bug_in_their_own_colours() {
         let mut app = ModelApp::new(Session::default());
@@ -621,7 +636,7 @@ mod tests {
         let out = frame(&mut app, &ctx, Vec::new());
         let (tab, discord) = (region(&app, "document_tab"), region(&app, "app_bar:discord"));
         let (solve, report) = (region(&app, "app_bar:solve"), region(&app, "app_bar:report"));
-        for (a, b) in [(tab, discord), (discord, solve), (solve, report)] {
+        for (a, b) in [(tab, solve), (solve, discord), (discord, report)] {
             assert!(a.right() <= b.left(), "{a:?} before {b:?}: tab {tab:?} discord {discord:?} solve {solve:?} report {report:?}");
         }
         assert!(

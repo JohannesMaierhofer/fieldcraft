@@ -95,8 +95,18 @@ fn a_later_release_saves_the_same_design() {
     assert!(fresh >= 1 && resaved >= 1, "saved copies: {fresh} fresh, {resaved} re-saved");
 }
 
-/// SolidCraft 0.42.0 saves design format 57; this FieldCraft reads it.
-const _: () = assert!(DESIGN_FORMAT >= 57);
+/// SolidCraft 0.48.1 saves design format 66.
+const _: () = assert!(DESIGN_FORMAT >= 66);
+
+#[test]
+fn opens_a_native_solidcraft_0_48_1_design() {
+    let design = open(&designs().join("solidcraft-0.48.1/box.solidcraft"));
+    let [body] = design.bodies.as_slice() else { panic!("expected one solid body") };
+    assert_eq!(body.name, "Box");
+    assert_eq!(body.faces().len(), 6);
+    let volume = body.measure().unwrap().volume;
+    assert!((volume - 20.0 * 16.0 * 12.0).abs() < 1e-8, "{volume}");
+}
 
 /// The hollow box with a post as each release saved it: one body, `Case`, of 14 faces (the
 /// post's side is one face from SolidCraft 0.40, which no longer splits a cylinder in halves).

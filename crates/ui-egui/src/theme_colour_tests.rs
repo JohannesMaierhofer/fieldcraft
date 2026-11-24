@@ -294,9 +294,8 @@ fn oklab_chroma(c: Color32) -> f64 {
 /// blue.
 const BLUE_HALF_SECTOR: f64 = 30.0;
 
-/// Kit colours that stay SolidCraft's however blue they are: its mark on the application bar,
-/// which neither FieldCraft nor the kit draws.
-const NOT_AN_ACCENT: [&str; 1] = ["logo"];
+/// The logo, named drawing papers, and user-selected document label colors have their own meaning.
+const NOT_AN_ACCENT: [&str; 4] = ["logo", "paper_blueprint", "paper_prussian_blue", "library_highlights"];
 
 /// Every colour slot of the kit's tokens, by the kit's own inventory of them (the theme-file
 /// keys, which the kit keeps complete at build time), with its colours.
@@ -352,10 +351,14 @@ fn the_kit_keeps_no_solidcraft_blue() {
             let off = (oklab_hue(c) - blue_hue).rem_euclid(360.0);
             oklab_chroma(c) > grey_chroma && off.min(360.0 - off) <= BLUE_HALF_SECTOR
         };
+        let fc = super::kit(dark);
+        assert_eq!(fc.paper_blueprint, sc.paper_blueprint, "{name}: blueprint paper");
+        assert_eq!(fc.paper_prussian_blue, sc.paper_prussian_blue, "{name}: Prussian blue paper");
+        assert_eq!(fc.library_highlights, sc.library_highlights, "{name}: user-selected document labels");
         let view = view_slots(sc);
         let kept: Vec<_> = kit_slots(sc)
             .into_iter()
-            .zip(kit_slots(super::kit(dark)))
+            .zip(kit_slots(fc))
             .filter(|((key, _), _)| !view.contains(key) && !NOT_AN_ACCENT.contains(key))
             .flat_map(|((key, ours), (_, theirs))| ours.into_iter().zip(theirs).map(move |(s, f)| (key, s, f)))
             .filter(|&(_, s, f)| is_blue(s) && s == f)

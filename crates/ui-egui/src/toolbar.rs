@@ -246,6 +246,7 @@ pub fn toolbar(app: &mut ModelApp, ui: &mut egui::Ui) {
                             icon: c.id,
                             size: ribbon::ButtonSize { width: width + extra, min_width: ribbon::BUTTON_MIN_WIDTH + extra },
                             enabled: of(c).is_some_and(|s| s.enabled),
+                            planned: !c.is_ready(),
                             pressed: of(c).is_some_and(|s| s.running),
                             exit: false,
                             split: None,

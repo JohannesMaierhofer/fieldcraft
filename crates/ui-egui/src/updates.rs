@@ -547,6 +547,7 @@ mod tests {
 
         // Not while the first run's question is open; after it is answered.
         let (mut a, jobs, _tx) = app(&temp("consent"), 30 * DAY, true);
+        a.set_update_prefs(true, None);
         a.prompt = Some(Prompt::Consent);
         a.poll_updates(&ctx);
         assert!(jobs.borrow().is_empty());

@@ -350,7 +350,7 @@ impl Shape {
                 name(f.face)
             )));
         }
-        let (m, refused) = plan.welded();
+        let (m, refused) = guard("weld tessellation", || plan.welded().map_err(KernelError::from))?;
         if let Some(f) = refused.first() {
             return Err(Error::Failed(format!(
                 "SolidCraft could not triangulate {} of the faces of body `{}` (face {} first: {})",

@@ -126,12 +126,21 @@ mod tests {
             expected_keys.insert(tabs.to_owned());
         }
 
-        // This fork ships its Python settings and desktop analysis workspace in US English.
-        // Exercise the catalog's fallback for each of those labels in a Hebrew session.
+        // New fork UI and workbench text uses the US English fallback in a Hebrew session.
         crate::theme::install_look();
         let english = solidcraft_ui_text::Locale::for_language(ENGLISH);
         let hebrew = solidcraft_ui_text::Locale::for_language(HEBREW);
         for id in [
+            "ui.app_bar_more",
+            "ui.design",
+            "ui.grid_paste_cut_off",
+            "ui.preferences",
+            "ui.redo",
+            "ui.window_about",
+            "ui.window_hide",
+            "ui.window_maximize",
+            "ui.window_minimize",
+            "ui.window_restore",
             "settings.python",
             "settings.python_note",
             "settings.python_runtime",

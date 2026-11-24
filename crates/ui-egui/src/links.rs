@@ -63,8 +63,8 @@ pub fn by_id(id: &str) -> Option<&'static Link> {
     LINKS.iter().find(|l| l.id == id)
 }
 
-/// The pills the preferences leave on, left to right; `wide` gives the named ones their label.
-pub fn pills(prefs: &Prefs, wide: bool) -> Vec<app_bar::Pill<'static>> {
+/// Visible pills in display order. The kit fits their labels to the available width.
+pub fn pills(prefs: &Prefs) -> Vec<app_bar::Pill<'static>> {
     LINKS
         .iter()
         .filter(|l| (l.shown)(prefs))
@@ -72,7 +72,7 @@ pub fn pills(prefs: &Prefs, wide: bool) -> Vec<app_bar::Pill<'static>> {
             id: l.id,
             icon: l.icon,
             label: if l.named { solidcraft_ui_text::tr(l.label) } else { "" },
-            labelled: l.named && wide,
+            labelled: l.named,
             tip: solidcraft_ui_text::tr(l.tip),
             hide_tip: solidcraft_ui_text::tr(l.hide_tip),
             name: solidcraft_ui_text::tr(l.name),
@@ -115,7 +115,7 @@ mod tests {
     /// The community link is visible by default and can be hidden.
     #[test]
     fn discord_is_the_only_community_link_and_can_be_hidden() {
-        let ids = |p: &Prefs| pills(p, true).iter().map(|p| p.id).collect::<Vec<_>>();
+        let ids = |p: &Prefs| pills(p).iter().map(|p| p.id).collect::<Vec<_>>();
         let mut prefs = Prefs::default();
         assert_eq!(ids(&prefs), ["discord"]);
         (LINKS[0].hide)(&mut prefs);

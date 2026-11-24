@@ -321,9 +321,8 @@ impl History {
                 values.insert(key, v);
             }
         }
-        let point = |p: &[solidcraft_doc::Expr; 3]| -> Option<[f64; 3]> {
-            Some([eval(&p[0], Kind::Length)?, eval(&p[1], Kind::Length)?, eval(&p[2], Kind::Length)?])
-        };
+        let vector =
+            |p: &[solidcraft_doc::Expr; 3], kind: Kind| -> Option<[f64; 3]> { Some([eval(&p[0], kind)?, eval(&p[1], kind)?, eval(&p[2], kind)?]) };
         let sketch_of = |id: solidcraft_doc::SketchId| self.state.sketch(*id);
         let mut node = FeatureNode {
             id: f.id,
@@ -369,17 +368,17 @@ impl History {
             }
             FeatureKind::Box { corner, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.placement = point(corner);
+                node.placement = vector(corner, Kind::Length);
                 node.direction = Some([0.0, 0.0, 1.0]);
             }
             FeatureKind::Cylinder { base, axis, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.placement = point(base);
-                node.direction = unit(xyz(**axis));
+                node.placement = vector(base, Kind::Length);
+                node.direction = vector(axis, Kind::Unitless).and_then(unit);
             }
             FeatureKind::Sphere { center, operation, .. } | FeatureKind::Torus { center, operation, .. } => {
                 node.operation = Some(operation_name(*operation).into());
-                node.placement = point(center);
+                node.placement = vector(center, Kind::Length);
             }
             FeatureKind::Hole { position, direction, .. } => {
                 node.operation = Some("cut".into());
@@ -564,7 +563,7 @@ mod tests {
         let script = r#"[
             {"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "body_name": "Case"}},
             {"command": "solid.shell", "params": {"faces": [[20, 15, 20]], "thickness": 2, "body": "Case"}},
-            {"command": "solid.cylinder", "params": {"diameter": 6, "height": 5, "base": [10, 10, 2], "operation": "join", "targets": ["Case"]}},
+            {"command": "solid.cylinder", "params": {"diameter": 6, "height": 5, "base": [10, 10, 2], "axis": [0, 0, "2 * 2"], "operation": "join", "targets": ["Case"]}},
             {"command": "solid.hole", "params": {"position": [10, 10, 7], "diameter": 2, "depth": 4}},
             {"command": "solid.box", "params": {"length": 4, "width": 4, "height": 20, "corner": [30, 20, 0], "body_name": "Slot"}},
             {"command": "solid.combine", "params": {"target": "Case", "tools": ["Slot"], "operation": "cut"}},
