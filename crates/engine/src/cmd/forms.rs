@@ -3157,6 +3157,20 @@ pub const RESULTS_LINEARIZE: &[Field] = &[
         .help("Odd number of equally spaced stations integrated with Simpson's rule.")
         .def("41"),
 ];
+pub const IMPORT_VTU: &[Field] = &[path("path", "Results file", false)
+    .req()
+    .help("A VTU grid, a single-piece PVTU, or a PVD time series. Importing replaces the previous external result series.")];
+pub const EXTERNAL_VIEW: &[Field] = &[
+    int("frame", "Frame", 0, fieldcraft_io::external::MAX_FRAMES as i64 - 1).help("Frame index, starting at zero."),
+    choice("association", "Field location", &[("point", "Points"), ("cell", "Cells")]).help("Where the selected values are stored."),
+    text("field", "Contour field").help("Array name from the result file. An empty name turns the contours off."),
+    choice("component", "Component", &[("value", "Scalar"), ("magnitude", "Magnitude"), ("x", "X"), ("y", "Y"), ("z", "Z")])
+        .help("Quantity to color."),
+    text("displacement", "Displacement field").help("Name of a two- or three-component point array in meters. An empty name clears deformation."),
+    range("scale", "Deformation scale", D::None, 0.0, crate::results::MAX_DEFORMATION_SCALE)
+        .help("Dimensionless multiplier. One shows the actual displacement."),
+    flag("show", "Show external results").help("Display the selected result grid. Turn off to return to the model."),
+];
 pub const EXPORT_VTU: &[Field] = &[
     path("path", "File", true).help("A .vtu file for one state, or a .pvd collection for every frame or mode.").req(),
     SOLVED,

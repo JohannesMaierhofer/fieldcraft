@@ -869,7 +869,14 @@ pub static CATALOGUE: &[Capability] = &[
         "Write a solved step as VTK unstructured grids for ParaView",
         &["results.export.animation", "results.render.save", "results.render.delete"],
     ),
-    soon("results.read", "Read Results", Results, "Files", "M9", "Read results in public formats"),
+    ready_more(
+        "results.import.vtu",
+        "Import VTU",
+        Results,
+        "Files",
+        "Open an external result grid or PVD time series and keep it with the model",
+        &["results.external.view"],
+    ),
     soon("results.convergence", "Convergence", Results, "Files", "M9", "Mesh convergence studies"),
     // ---- External Analysis ----
     #[cfg(not(target_arch = "wasm32"))]

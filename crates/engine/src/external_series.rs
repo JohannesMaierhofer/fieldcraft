@@ -282,6 +282,7 @@ fn load(s: &mut Session, p: &Value) -> Result<Value> {
     s.field_series = Some(series);
     s.external_deformation_scale = scale;
     s.external_field = None;
+    crate::external_view::hide(s);
     s.results_view = None;
     Ok(reply)
 }

@@ -128,6 +128,7 @@ fn contour(s: &mut Session, p: &Value) -> Result<Value> {
     let field = ExternalField::new(contour, s.revision());
     let reply = json!({"shown": true, "field":field.title, "min":field.min, "max":field.max, "nodes":s.model.nodes().len()});
     selected.register(s, &name, &unit)?;
+    crate::external_view::hide(s);
     s.results_view = None;
     s.field_series = None;
     s.external_deformation_scale = scale;

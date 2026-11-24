@@ -201,6 +201,20 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
 /// camera asked of the hosts. What no longer applies comes back as warnings; `pending` when its
 /// step has no result yet.
 pub(crate) fn show(s: &mut Session, name: &str) -> Result<Value> {
+    apply_saved(s, name, true)
+}
+
+/// Rebuild the native display state behind an imported grid when opening a project.
+/// A saved camera for the analysis mesh may not frame the independent imported grid.
+pub(super) fn show_on_open(s: &mut Session, name: &str) -> Result<Value> {
+    let external = s.external_view.take();
+    let native_camera = !external.as_ref().is_some_and(|v| v.show);
+    let result = apply_saved(s, name, native_camera);
+    s.external_view = external;
+    result
+}
+
+fn apply_saved(s: &mut Session, name: &str, restore_camera: bool) -> Result<Value> {
     let view = s.view.saved(name).cloned().ok_or_else(|| {
         let names: Vec<&str> = s.view.views.iter().map(|v| v.name.as_str()).collect();
         EngineError::Params(format!(
@@ -225,7 +239,7 @@ pub(crate) fn show(s: &mut Session, name: &str) -> Result<Value> {
         }
     }
     let mut camera = Value::Null;
-    if let Some(c) = &view.camera {
+    if restore_camera && let Some(c) = &view.camera {
         match crate::view::camera(&Value::Object(c.clone())) {
             Ok(aim) => {
                 let aim = aim_in(&aim, &view.units, s.units());

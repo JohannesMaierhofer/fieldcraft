@@ -122,8 +122,9 @@ pub(crate) const DELETE_ICON: &str = "delete";
 const SCRIPT: Filter = Filter { name: "FieldCraft script (JSON)", extensions: &["json", "JSON"] };
 /// Largest script File › Run Script… reads (bytes), as `fieldcraft-cli run`.
 const MAX_SCRIPT_BYTES: u64 = 256 * 1024 * 1024;
+const VTK_RESULTS: Filter = Filter { name: "VTK results and time series", extensions: &["vtu", "VTU", "pvtu", "PVTU", "pvd", "PVD"] };
 const ANY: Filter = Filter {
-    name: "Models, designs and meshes",
+    name: "Models, designs, meshes and results",
     extensions: &[
         "fieldcraft",
         "sc",
@@ -142,6 +143,12 @@ const ANY: Filter = Filter {
         "3MF",
         "msh",
         "MSH",
+        "vtu",
+        "VTU",
+        "pvtu",
+        "PVTU",
+        "pvd",
+        "PVD",
     ],
 };
 
@@ -158,6 +165,7 @@ pub const OPEN_FILTERS: &[Filter] = &[
     IGES,
     MESH,
     ORPHAN,
+    VTK_RESULTS,
     #[cfg(target_os = "linux")]
     ALL_FILES,
 ];
@@ -177,6 +185,7 @@ fn filters(kind: Kind) -> &'static [Filter] {
         ],
         Kind::Mesh => &[MESH, ANY],
         Kind::Orphan => &[ORPHAN, ANY],
+        Kind::Results => &[VTK_RESULTS, ANY],
     }
 }
 
@@ -184,13 +193,13 @@ fn filters(kind: Kind) -> &'static [Filter] {
 fn verbs(kind: Kind) -> (&'static str, &'static str) {
     match kind {
         Kind::Model | Kind::Design => ("Opening", "Opened"),
-        Kind::Mesh | Kind::Orphan => ("Importing", "Imported"),
+        Kind::Mesh | Kind::Orphan | Kind::Results => ("Importing", "Imported"),
     }
 }
 
 /// The file a command opens, if it is one the File menu handles with a picker.
 fn kind_of_command(command: &str) -> Option<Kind> {
-    [Kind::Model, Kind::Design, Kind::Mesh, Kind::Orphan].into_iter().find(|k| k.command() == command)
+    [Kind::Model, Kind::Design, Kind::Mesh, Kind::Orphan, Kind::Results].into_iter().find(|k| k.command() == command)
 }
 
 /// Whether `command` may run long: a solve, a mesher or an open (a sample meshes, a file can be
@@ -217,6 +226,7 @@ fn fresh(command: &str) -> bool {
 
 /// Commands a form runs in the background: they can take a while on a large part.
 pub const BACKGROUND: &[&str] = &[
+    "results.import.vtu",
     "mesh.import.orphan",
     "deck.read",
     "mesh.tet.generate",
@@ -991,7 +1001,10 @@ impl ModelApp {
     /// Whether replacing the model would lose work: edits, or a still-unsaved imported deck
     /// whose history was intentionally cleared. A different document cannot inherit the marker.
     pub(crate) fn has_unsaved_work(&self) -> bool {
-        self.session.is_dirty() && (!self.session.journal.is_empty() || self.imported_document == Some(self.session.opened()))
+        self.session.is_dirty()
+            && (!self.session.journal.is_empty()
+                || self.session.external_results().is_some()
+                || self.imported_document == Some(self.session.opened()))
     }
 
     /// Open a file the user chose (picked, dropped or from the recent list) by its type. A model
@@ -1000,7 +1013,7 @@ impl ModelApp {
         let Some(kind) = Kind::of(path) else {
             self.set_status(
                 format!(
-                    "{path}: FieldCraft opens .fieldcraft models, .sc/.solidcraft designs, STEP/IGES geometry, .3mf tagged meshes and .msh orphan meshes"
+                    "{path}: FieldCraft opens .fieldcraft models, .sc/.solidcraft designs, STEP/IGES geometry, .3mf tagged meshes, .msh orphan meshes, and .vtu/.pvtu/.pvd results"
                 ),
                 true,
             );
@@ -2343,6 +2356,45 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn opening_a_vtu_from_home_displays_its_grid_without_an_editable_model() {
+        let dir = temp("external-result");
+        let path = dir.join("result.vtu");
+        let data = r#"<VTKFile type="UnstructuredGrid" version="1.0" byte_order="LittleEndian"><UnstructuredGrid><Piece NumberOfPoints="3" NumberOfCells="1">
+<Points><DataArray type="Float64" NumberOfComponents="3" format="ascii">10 0 0 11 0 0 10 1 0</DataArray></Points>
+<Cells><DataArray type="Int32" Name="connectivity" format="ascii">0 1 2</DataArray><DataArray type="Int32" Name="offsets" format="ascii">3</DataArray><DataArray type="UInt8" Name="types" format="ascii">5</DataArray></Cells>
+<CellData><DataArray type="Float64" Name="pressure" format="ascii">4</DataArray></CellData></Piece></UnstructuredGrid></VTKFile>"#;
+        std::fs::write(&path, data).unwrap();
+        let mut app = ModelApp::new(Session::default());
+        app.launch_start();
+        app.open_path(path.to_str().unwrap());
+        app.wait_loaded();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100., 750.))), ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            output.textures_delta.clear();
+        }
+        assert!(!app.start_shown());
+        assert_eq!(app.ui.tab, fieldcraft_engine::catalogue::Tab::Results);
+        assert!(app.layout.contains_key("context:external_results"));
+        assert!(app.session.model.elements().is_empty());
+        assert!(app.has_unsaved_work());
+        assert_eq!(app.scene().1.tris.len(), 1);
+        assert_eq!(app.drawn_bounds().min.x, 10.);
+        assert!(app.with_picker(|p| p.display.nodes.is_empty() && !p.elements));
+        app.run("results.external.view", json!({"show":false})).unwrap();
+        assert!(app.scene().1.tris.is_empty());
+        app.start("results.external.view").unwrap();
+        assert!(app.dialog.is_none(), "the Files menu restores the result controls directly");
+        assert_eq!(app.scene().1.tris.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn file_types_dispatch_to_their_command() {
         assert_eq!(Kind::of("a/b.fieldcraft"), Some(Kind::Model));
         assert_eq!(Kind::of("B.SOLIDCRAFT"), Some(Kind::Design));
@@ -2351,6 +2403,9 @@ pub(crate) mod tests {
         assert_eq!(Kind::of("part.3MF").map(Kind::command), Some("geometry.import.mesh"));
         assert_eq!(Kind::of("part.MSH").map(Kind::command), Some("mesh.import.orphan"));
         assert!(is_long("mesh.import.orphan"));
+        for path in ["solution.VTU", "partitioned.pvtu", "series.pvd"] {
+            assert_eq!(Kind::of(path).map(Kind::command), Some("results.import.vtu"));
+        }
         for path in ["part.step", "part.StP", "part.IGES", "part.igs"] {
             assert_eq!(Kind::of(path).map(Kind::command), Some("geometry.open"));
         }
@@ -2358,6 +2413,14 @@ pub(crate) mod tests {
         assert_eq!(Kind::of("noext"), None);
         assert_eq!(with_extension("a/b".into(), "fieldcraft"), "a/b.fieldcraft");
         assert_eq!(with_extension("a/b.FIELDCRAFT".into(), "fieldcraft"), "a/b.FIELDCRAFT");
+    }
+
+    #[test]
+    fn open_filters_include_result_files() {
+        for ext in VTK_RESULTS.extensions {
+            assert!(ANY.extensions.contains(ext));
+            assert!(filters(Kind::Results)[0].extensions.contains(ext));
+        }
     }
 
     #[test]

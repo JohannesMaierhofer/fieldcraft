@@ -34,6 +34,7 @@ pub mod control;
 pub mod describe;
 mod document;
 pub mod elide;
+mod external_results;
 pub mod feature_graph;
 pub mod fields;
 pub mod files;
@@ -468,6 +469,11 @@ pub struct ModelApp {
     pub features_open: std::collections::BTreeSet<(String, u64)>,
     /// Whether results were shown last frame (the Results tab comes up when they appear).
     results_shown: bool,
+    external_fit: Option<(u64, usize, u64, Option<String>)>,
+    external_bounds: Aabb3,
+    external_clock: Option<(u64, f64, usize)>,
+    external_display_error: Option<String>,
+    external_bands: Option<(external_results::RangeKey, Option<fieldcraft_render::contour::Bands>)>,
     /// The step and mode shown last ([`fieldcraft_engine::results::ResultsView`]): another one
     /// is framed if part of it is out of view.
     shape_shown: Option<(String, usize)>,
@@ -637,6 +643,11 @@ impl ModelApp {
             reply: None,
             features_open: Default::default(),
             results_shown: false,
+            external_fit: None,
+            external_bounds: Aabb3::EMPTY,
+            external_clock: None,
+            external_display_error: None,
+            external_bands: None,
             shape_shown: None,
             reframe: None,
             camera_seen: 0,
@@ -760,6 +771,9 @@ impl ModelApp {
             }
             e => Failure { message: e.to_string(), refused: None },
         });
+        if r.is_ok() && matches!(id, "results.animate" | "results.import.vtu") {
+            self.external_clock = None;
+        }
         let changed = self.session.revision() != revision;
         // The definition selected in the browser keeps its selection under its new name.
         if id == "model.rename"
@@ -916,6 +930,11 @@ impl ModelApp {
             let e = u.to_string();
             self.refuse(u);
             return Err(e);
+        }
+        if interactive && spec.id == "results.external.view" {
+            self.dialog = None;
+            self.ui.select_tab(Tab::Results);
+            return self.run(spec.id, json!({"show":true})).map(|_| ());
         }
         if self.file_action(spec.id, &preset, interactive) {
             self.dialog = None;
@@ -1320,6 +1339,10 @@ impl ModelApp {
         (self.revision, self.ui.style, self.ui.show(), self.ui.dark, plot, self.selected_datum(), marks).hash(&mut h);
         self.session.external_contour().map(|f| f.display_id).hash(&mut h);
         self.session.external_deformation_scale().to_bits().hash(&mut h);
+        if let Some((_, view)) = fieldcraft_engine::external_view::visible(&self.session) {
+            (self.session.external_generation(), view.frame, view.association, &view.field, view.component, &view.displacement, view.scale.to_bits())
+                .hash(&mut h);
+        }
         format!("{:?}", self.datum_preview()).hash(&mut h);
         h.finish()
     }
@@ -1327,6 +1350,9 @@ impl ModelApp {
     /// What the results plot is built for: the model, the result, its view and the animation
     /// frame; `None` when no results are shown.
     fn plot_key(&self) -> Option<PlotKey> {
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return None;
+        }
         let (view, result, current) = results::shown(&self.session)?;
         let frame = results::frame(view, result, self.now);
         let pick = results::pick(view, result, frame);
@@ -1366,7 +1392,24 @@ impl ModelApp {
         self.display();
         self.plot();
         let key = self.scene_key();
+        if self.scene.0 != Some(key)
+            && let Some((frame, view)) = fieldcraft_engine::external_view::visible(&self.session)
+        {
+            let colors = theme::Tokens::get(self.ui.dark).palette();
+            let range_key = external_results::RangeKey::new(self.session.external_generation(), view);
+            if self.external_bands.as_ref().is_none_or(|(key, _)| *key != range_key) {
+                self.external_bands = Some((range_key, self.session.external_results().and_then(|s| view.bands(s))));
+            }
+            let bands = self.external_bands.as_ref().and_then(|(_, b)| *b);
+            let (scene, drawn, shown) = fieldcraft_engine::external_view::scene(frame, view, self.ui.style, self.ui.show(), &colors, bands, None);
+            self.external_bounds = drawn.bounds;
+            self.external_display_error = shown.failed.into_iter().next();
+
+            self.scene = (Some(key), scene, Aabb3::EMPTY);
+        }
         if self.scene.0 != Some(key) {
+            self.external_bands = None;
+            self.external_display_error = None;
             let t = theme::Tokens::get(self.ui.dark);
             let (style, show) = (self.ui.style, self.ui.show());
             let display = self.external_or_base_mesh();
@@ -1633,6 +1676,8 @@ impl ModelApp {
         self.plot();
         let unit = glyphs::unit_for(&self.cam, height, self.ui.symbol_size, pixels_per_point).and_then(glyphs::quantise_unit);
         let mut h = std::hash::DefaultHasher::new();
+        let external = fieldcraft_engine::external_view::visible(&self.session).is_some();
+        external.hash(&mut h);
         let plot = self.plot.1.as_ref().map(|p| Arc::as_ptr(p) as usize);
         let show = self.ui.show();
         (self.revision, show.loads, show.interactions, self.ui.result_symbols, self.ui.dark, plot, unit.map(|u| u.0), self.highlighted())
@@ -1653,7 +1698,7 @@ impl ModelApp {
             let drawn = self.plot.1.as_ref().map_or(self.external_or_base_mesh(), |p| &p.display);
             let mut s = Scene::default();
             let unit = unit.map_or(f64::NAN, |u| u.1);
-            let d = if step.is_some() && !self.ui.result_symbols {
+            let d = if external || step.is_some() && !self.ui.result_symbols {
                 Drawn::default()
             } else {
                 scene::symbols(&mut s, glyphs, |n| drawn.node_position(n), show, step.is_some(), unit, self.highlighted(), &t)
@@ -1667,6 +1712,9 @@ impl ModelApp {
     /// (deformed) shape and the reference points. Datums are never framed (#295): they are drawn
     /// at the model's extent, so framing them would only shrink the part.
     fn drawn_bounds(&self) -> Aabb3 {
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return self.external_bounds;
+        }
         let mut bounds = self.external_or_base_mesh().bounds;
         if let Some(p) = &self.plot.1 {
             bounds.union(p.display.bounds);
@@ -1740,6 +1788,19 @@ impl ModelApp {
     /// Run `f` with the picker of what the viewport draws: a results plot's elements, or the
     /// model's elements and its geometry where no element faces cover it (as [`scene::build`]).
     pub fn with_picker<R>(&mut self, f: impl FnOnce(&selection::Picker) -> R) -> R {
+        // An imported grid owns its point and cell numbers. They never address the model's
+        // nodes, faces or geometry, including in programmatic viewport selections.
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return f(&selection::Picker {
+                display: &DisplayMesh::default(),
+                names: &[],
+                model: &self.session.model,
+                index: &selection::Index::default(),
+                elements: false,
+                geometry: false,
+                curves: false,
+            });
+        }
         let index = self.pick_index();
         let plot = self.plot();
         let (show_mesh, show_geometry) = (self.ui.show_mesh, self.ui.show_geometry);
@@ -1767,6 +1828,9 @@ impl ModelApp {
     /// The nearest drawn point under window point `at`: the pick ray's first hit on the results
     /// plot when one shows, else on the shown elements' faces or the design's surfaces.
     pub fn surface_point(&mut self, at: egui::Pos2) -> Option<Vec3> {
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            return None;
+        }
         let rect = self.viewport.rect.filter(|r| r.contains(at))?;
         let (o, d) = self.cam.ray(f64::from(at.x - rect.left()), f64::from(at.y - rect.top()), f64::from(rect.width()), f64::from(rect.height()));
         let t = if let Some(plot) = self.plot() {
@@ -1878,6 +1942,12 @@ impl ModelApp {
             h.finish()
         };
         let scene = self.scene_key();
+        if fieldcraft_engine::external_view::visible(&self.session).is_some() {
+            if self.pick.overlay.0 != Some(scene) {
+                self.pick.overlay = (Some(scene), Arc::new(Scene::default()));
+            }
+            return (scene, self.pick.overlay.1.clone());
+        }
         let set = self.selected_set();
         let cut = self.partition_preview();
         let merge = self.merge_preview();
@@ -2290,7 +2360,7 @@ impl ModelApp {
     /// viewport calls it when it knows its size and its overlays, before drawing.
     pub(crate) fn apply_reframe(&mut self) {
         let Some(r) = self.reframe else { return };
-        if self.display().bounds.is_empty() {
+        if fieldcraft_engine::external_view::visible(&self.session).is_none() && self.display().bounds.is_empty() {
             return;
         }
         self.reframe = None;
@@ -2335,8 +2405,25 @@ impl ModelApp {
         if !self.synthetic.is_empty() {
             ctx.request_repaint();
         }
+        self.advance_external_playback(ctx);
         // Results coming up (a solve, a results command) bring the Results tab.
-        let shown = self.session.results_view.is_some() || self.session.external_contour().is_some();
+        let external = fieldcraft_engine::external_view::visible(&self.session)
+            .map(|(_, v)| (self.session.external_generation(), v.frame, v.scale.to_bits(), v.displacement.clone()));
+        if let Some((generation, ..)) = &external
+            && self.external_fit != external
+        {
+            let fit = if self.external_fit.as_ref().is_none_or(|(old, ..)| old != generation) {
+                framing::Reframe::Fit
+            } else {
+                framing::Reframe::IfOffscreen
+            };
+            self.reframe = framing::Reframe::merge(self.reframe, fit);
+            if fit == framing::Reframe::Fit {
+                self.ui.select_tab(Tab::Results);
+            }
+        }
+        self.external_fit = external;
+        let shown = self.session.results_view.is_some() || self.external_fit.is_some() || self.session.external_contour().is_some();
         if shown && !self.results_shown {
             self.ui.select_tab(Tab::Results);
             self.reframe = framing::Reframe::merge(self.reframe, framing::Reframe::IfOffscreen);
@@ -2361,7 +2448,9 @@ impl ModelApp {
         if self.selected_seed.as_ref().is_some_and(|edge| self.seed(edge).is_none()) {
             self.selected_seed = None;
         }
-        if self.session.results_view.as_ref().is_some_and(|v| v.animate) || self.session.external_series().is_some_and(|s| s.playing()) {
+        if self.external_fit.is_none()
+            && (self.session.results_view.as_ref().is_some_and(|v| v.animate) || self.session.external_series().is_some_and(|s| s.playing()))
+        {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(results::PERIOD / results::FRAMES as f64));
         }
         self.screenshots(ctx);

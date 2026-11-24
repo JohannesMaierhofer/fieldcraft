@@ -17,6 +17,7 @@ pub mod bug_report;
 pub mod catalogue;
 pub mod cmd;
 pub mod crash;
+pub mod external_view;
 pub mod flow;
 pub mod logfile;
 pub mod machine;
@@ -379,6 +380,14 @@ pub struct Session {
     results_stored: u64,
     /// [`Session::results_stored`] as last saved (or opened).
     saved_results: u64,
+    /// Imported solution values belong to their own grids. Session snapshots share the data.
+    external: Option<Arc<fieldcraft_io::external::Series>>,
+    /// Changes when an import replaces the dataset even if the model revision stays current.
+    external_generation: u64,
+    saved_external_generation: u64,
+    /// Field, frame, and displacement shown on the imported grid.
+    pub external_view: Option<external_view::ExternalView>,
+    saved_external_view: Option<external_view::ExternalView>,
     /// What the results display shows (`results.*`); `None` shows the model.
     pub results_view: Option<results::ResultsView>,
     /// The default work caps of commands; a file replacing the session keeps them.
@@ -522,7 +531,7 @@ impl Session {
         if let Some((mut before, document)) = before {
             // A command that makes the session another document (a new model) keeps the old
             // one in its undo step.
-            if self.document() != document {
+            if !document.matches(self) {
                 before.document = Some(document);
             }
             if result.is_err() {
@@ -774,6 +783,8 @@ impl Session {
     pub fn is_dirty(&self) -> bool {
         self.saved_revision.unwrap_or(0) != self.revision
             || self.view != self.saved_view
+            || self.external_view != self.saved_external_view
+            || self.external_generation != self.saved_external_generation
             || self.results_stored != self.saved_results
             || self.run != self.saved_run
     }
@@ -784,6 +795,25 @@ impl Session {
         self.results.get(step).filter(|(revision, _)| *revision == self.revision).map(|(_, r)| r)
     }
 
+    /// The imported result frames, including their own sampling geometry.
+    pub fn external_results(&self) -> Option<&fieldcraft_io::external::Series> {
+        self.external.as_deref()
+    }
+
+    /// A revision for cached scenes of imported results, independent of the analysis model.
+    pub fn external_generation(&self) -> u64 {
+        self.external_generation
+    }
+
+    /// Replace the imported dataset after validating it in full. Existing solves stay current.
+    pub fn set_external_results(&mut self, series: fieldcraft_io::external::Series) -> Result<()> {
+        series.check()?;
+        self.external_view = Some(external_view::ExternalView::initial(&series));
+        self.external = Some(Arc::new(series));
+        self.external_generation = next_revision();
+        Ok(())
+    }
+
     /// The steps with a current result.
     pub fn solved_steps(&self) -> impl Iterator<Item = &str> {
         self.results.iter().filter(|(_, (revision, _))| *revision == self.revision).map(|(name, _)| name.as_str())
@@ -792,6 +822,7 @@ impl Session {
     /// Keep a step's result for the current state. With no results shown, the display shows it;
     /// a view of the same step stays as it is (on mode 1 and the last frame if its own are gone).
     pub(crate) fn store_result(&mut self, result: StepResult) {
+        external_view::hide(self);
         match &mut self.results_view {
             None => self.results_view = Some(results::ResultsView::for_result(&result)),
             Some(v) if v.step == result.step() && results::displacements(&result, v.pick()).is_err() => {
@@ -898,6 +929,8 @@ impl Session {
         self.saved_revision = Some(self.revision);
         self.saved_view = self.view.clone();
         self.saved_results = self.results_stored;
+        self.saved_external_generation = self.external_generation;
+        self.saved_external_view = self.external_view.clone();
         self.saved_run = self.run.clone();
     }
 }

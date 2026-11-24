@@ -33,6 +33,7 @@ pub fn has_context(app: &mut ModelApp) -> bool {
         || app.selected_mesh
         || app.reply.is_some()
         || has_external_controls(app)
+        || fieldcraft_engine::external_view::visible(&app.session).is_some()
         || app.plot().is_some()
 }
 
@@ -57,6 +58,7 @@ enum Info {
     Mesh,
     Results(std::sync::Arc<crate::results::Plot>),
     ExternalResults,
+    VtuResults,
 }
 
 impl Card {
@@ -79,6 +81,7 @@ impl Info {
             Info::Mesh => "context:mesh",
             Info::Results(_) => "context:results",
             Info::ExternalResults => "context:external-series",
+            Info::VtuResults => "context:external_results",
         }
     }
 
@@ -92,6 +95,7 @@ impl Info {
             Info::Properties(kind, name, _) => (kind.icon().to_string(), format!("{}: {name}", kind.label())),
             Info::Seed(_) => ("mesh.seed.edge".into(), "Seed".into()),
             Info::Mesh => ("mesh.tet.generate".into(), "Mesh".into()),
+            Info::VtuResults => ("results.import.vtu".into(), "External results".into()),
             Info::Results(_) => ("results.deformed".into(), "Results".into()),
             Info::ExternalResults => match app.session.external_series() {
                 Some(series) if series.is_time() => ("results.animate".into(), "External Time Series".into()),
@@ -174,6 +178,7 @@ fn cards(app: &mut ModelApp) -> Vec<Card> {
     let reply_beside_form = matches!(first, Some(Card::Form)) && app.reply.is_some();
     let mut out: Vec<Card> = first.into_iter().collect();
     match app.plot() {
+        _ if !reply_beside_form && fieldcraft_engine::external_view::visible(&app.session).is_some() => out.push(Card::Info(Info::VtuResults)),
         Some(plot) if !reply_beside_form => out.push(Card::Info(Info::Results(plot))),
         _ if !reply_beside_form && has_external_controls(app) => out.push(Card::Info(Info::ExternalResults)),
         _ => out.extend(ranked.next()),
@@ -281,6 +286,7 @@ fn body(app: &mut ModelApp, ui: &mut egui::Ui, t: &Tokens, card: &Info) {
         Info::Properties(kind, name, rows) => properties(app, ui, *kind, name, rows),
         Info::Seed(edge) => seed_card(app, ui, edge.clone()),
         Info::Mesh => mesh_card(app, ui, t),
+        Info::VtuResults => crate::external_results::controls(app, ui),
         Info::Results(plot) => crate::results_panel::controls(app, plot, ui, t),
         Info::ExternalResults => crate::results_panel::external_controls(app, ui),
         Info::Reply => crate::reply::show(app, ui, t),
@@ -297,6 +303,9 @@ fn close(app: &mut ModelApp, card: &Info) {
         // Errors show in the status bar.
         Info::ExternalResults => {
             let _ = app.run("results.external.contour", json!({"show": false}));
+        }
+        Info::VtuResults => {
+            let _ = app.run("results.external.view", json!({"show":false}));
         }
         Info::Results(_) => {
             let _ = app.run("results.clear", json!({}));
