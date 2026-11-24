@@ -2,13 +2,16 @@ Unicode true
 RequestExecutionLevel user
 ManifestSupportedOS Win10
 !include "FileFunc.nsh"
-VIProductVersion 0.8.1.2
+!ifndef REVISION
+  !define REVISION 2
+!endif
+VIProductVersion 0.8.1.${REVISION}
 VIAddVersionKey ProductName "FieldCraft with NGSolve"
-VIAddVersionKey ProductVersion "0.8.1-r2"
-VIAddVersionKey FileVersion "0.8.1-r2"
+VIAddVersionKey ProductVersion "0.8.1-r${REVISION}"
+VIAddVersionKey FileVersion "0.8.1-r${REVISION}"
 VIAddVersionKey FileDescription "FieldCraft with NGSolve network installer"
 VIAddVersionKey LegalCopyright "FieldCraft contributors and their respective licensors"
-Name "FieldCraft 0.8.1 with NGSolve (r2 network installer, ${ARCH})"
+Name "FieldCraft 0.8.1 with NGSolve (r${REVISION} network installer, ${ARCH})"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\FieldCraft-NGSolve-Network"
 SetCompressor /FINAL zlib
@@ -19,20 +22,31 @@ Page instfiles
 Section
   InitPluginsDir
   SetOutPath "$PLUGINSDIR\payload"
-  File "${PAYLOAD}/fieldcraft.exe"
-  File "${PAYLOAD}/fieldcraft-cli.exe"
-  File "${PAYLOAD}/identity.json"
-  File "${PAYLOAD}/runtime-lock.json"
-  File "${PAYLOAD}/SOLVER-NOTICES.txt"
-  File "${PAYLOAD}/INSTALL.txt"
-  File "${PAYLOAD}/fieldcraft-ngsolve.cmd"
-  File "${PAYLOAD}/install.ps1"
+  !cd "${PAYLOAD}"
+  File "fieldcraft.exe"
+  File "fieldcraft-cli.exe"
+  File "identity.json"
+  File "runtime-lock.json"
+  File "SOLVER-NOTICES.txt"
+  File "INSTALL.txt"
+  File "fieldcraft-ngsolve.cmd"
+  File "install.ps1"
+  !if ${REVISION} == 4
+    SetOutPath "$PLUGINSDIR\payload\examples"
+    !cd "examples"
+    File "slab.json"
+    File "slab.analysis.json"
+    File "potential.py"
+    !cd ".."
+  !endif
   SetOutPath "$PLUGINSDIR\payload\licenses"
-  File "${PAYLOAD}/licenses/LICENSE-MIT"
-  File "${PAYLOAD}/licenses/LICENSE-APACHE"
-  File "${PAYLOAD}/licenses/NOTICE"
-  File "${PAYLOAD}/licenses/THIRD-PARTY-LICENSES.txt"
-  File "${PAYLOAD}/licenses/NSIS.txt"
+  !cd "licenses"
+  File "LICENSE-MIT"
+  File "LICENSE-APACHE"
+  File "NOTICE"
+  File "THIRD-PARTY-LICENSES.txt"
+  File "NSIS.txt"
+  !cd ".."
   SetOutPath "$PLUGINSDIR\payload"
   ${GetParameters} $0
   ClearErrors

@@ -1,0 +1,61 @@
+name: Windows NGSolve R4 network installers
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            arch: x64
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            arch: arm64
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    env:
+      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r4
+      FIELDCRAFT_BUILD_SHA: ${{ github.sha }}
+      FIELDCRAFT_TELEMETRY: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build the native desktop and CLI
+        run: cargo build --release --locked --target ${{ matrix.target }} -p fieldcraft -p fieldcraft-cli
+      - name: Collect dependency licenses
+        run: cargo run --release --locked -p xtask -- licences
+      - name: Build the per-user network installer
+        run: ./packaging/ngsolve/windows-online/package-r4.ps1 -Arch '${{ matrix.arch }}'
+      - name: Install, repair, solve and display results
+        run: ./packaging/ngsolve/windows-online/verify-r4.ps1 -Arch '${{ matrix.arch }}'
+      - name: Upload the tested installer and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-ngsolve-r4-windows-${{ matrix.arch }}
+          path: dist/ngsolve/*
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload the installed desktop identity and numerical checks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-ngsolve-r4-windows-${{ matrix.arch }}-verification
+          path: |
+            verification/*.json
+            verification/*.png
+          if-no-files-found: error

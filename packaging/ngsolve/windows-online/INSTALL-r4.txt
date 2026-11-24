@@ -1,0 +1,30 @@
+FieldCraft with NGSolve for Windows, 0.8.1-r4
+
+Install the file for your Windows architecture. On Windows 11 ARM64 the
+desktop and CLI run natively and Windows emulates the x64 solver process.
+The unsigned installer runs under your Windows account. Check the SHA-256
+against the checksum published with the release.
+
+Setup fetches the locked CPython interpreter, NGSolve, NumPy, uv, and their
+dependencies from their publishers and verifies the downloaded files. The
+private runtime works offline after setup. The installed runtime-lock.json
+lists the source URLs and hashes. SOLVER-NOTICES.txt describes the packages.
+
+Open FieldCraft from the Start menu. In External Analysis, open the Python
+Workspace to run an .analysis.json definition against your model.
+
+To try the installed capacitor example, open Solver examples in the Start
+menu and copy its three files into a project directory. In PowerShell, change
+to that project directory and set $app to the installation folder containing
+fieldcraft.exe. The FieldCraft shortcut's Properties shows this folder.
+
+  & "$app\fieldcraft-cli.exe" run slab.json
+  & "$app\fieldcraft-ngsolve.cmd" run slab.analysis.json result
+
+The second command computes the electric potential and field. The expected
+stored energy is 4.42709e-14 J. Open slab.fieldcraft and the result manifest
+result/results.json in the Python Workspace to inspect the results.
+
+Setup stores each version in its own folder under your selected installation
+directory. Running the installer again checks that version and repairs it if
+needed. Your models and project directories are independent of this folder.

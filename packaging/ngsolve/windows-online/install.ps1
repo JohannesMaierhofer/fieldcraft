@@ -87,12 +87,15 @@ function Start-Generation([string]$Directory, [string]$ReceiptHash, [string]$Sta
 
 function Check-Installation([string]$Directory, $Record) {
     Assert-Hash (Join-Path $Directory 'runtime-lock.json') $Record.runtime_lock_sha256
-    foreach ($name in 'fieldcraft.exe','fieldcraft-cli.exe') {
-        Assert-Hash (Join-Path $Directory $name) $Record.files.$name
+    foreach ($file in $Record.files.PSObject.Properties) {
+        Assert-Hash (Join-Path $Directory $file.Name) $file.Value
     }
     Check-Runtime (Join-Path $Directory 'python\python.exe')
-    # Exercise the installed case dispatch and its case_run import on every invocation.
-    Run-Checked (Join-Path $Directory 'fieldcraft-ngsolve.cmd') @('case','--help') | Out-Null
+    if ($Record.installer_revision -eq 'r2') {
+        Run-Checked (Join-Path $Directory 'fieldcraft-ngsolve.cmd') @('case','--help') | Out-Null
+    } else {
+        Run-Checked (Join-Path $Directory 'python\python.exe') @('-I','-m','uv','--version') | Out-Null
+    }
 }
 
 function Initialize-Preferences {
@@ -125,7 +128,10 @@ function Initialize-Preferences {
 $ProgressPreference = 'SilentlyContinue'
 $identity = Get-Content -LiteralPath "$PSScriptRoot\identity.json" -Raw | ConvertFrom-Json
 Assert-Hash "$PSScriptRoot\runtime-lock.json" $identity.runtime_lock_sha256
-if ($identity.generation -cnotmatch '^[a-z2-7]{52}$') { throw 'Invalid package generation identifier.' }
+if ($identity.installer_revision -notin 'r2','r4') { throw 'Unknown installer revision.' }
+$legacyBridge = $identity.installer_revision -eq 'r2'
+$generationPattern = if ($legacyBridge) { '^[a-z2-7]{52}$' } else { '^[0-9a-f]{32}$' }
+if ($identity.generation -cnotmatch $generationPattern) { throw 'Invalid package generation identifier.' }
 $lock = Get-Content -LiteralPath "$PSScriptRoot\runtime-lock.json" -Raw | ConvertFrom-Json
 $native = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
 $required = @{x64='AMD64'; arm64='ARM64'}[$identity.arch]
@@ -158,7 +164,7 @@ try {
     $state = Get-GenerationState $application $receiptHash { param($path) Check-Installation $path $identity }
     if ($state -ne 'ready') {
         Download-Pinned $lock.windows.runtime (Join-Path $temp 'python.tar.gz')
-        Download-Pinned $lock.bridge (Join-Path $temp 'bridge.zip')
+        if ($legacyBridge) { Download-Pinned $lock.bridge (Join-Path $temp 'bridge.zip') }
         $wheels = @()
         foreach ($wheel in $lock.windows.wheels) {
             $path = Join-Path $temp $wheel.name
@@ -174,13 +180,16 @@ try {
         Run-Checked $python @('-I','-m','ensurepip')
         Run-Checked $python (@('-I','-m','pip','--isolated','--disable-pip-version-check','install','--no-index','--no-deps','--no-cache-dir','--no-compile') + $wheels)
         Run-Checked $python @('-I','-m','pip','--isolated','--disable-pip-version-check','check')
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $archive = Join-Path $temp 'bridge.zip'
-        $expanded = Join-Path $temp 'bridge'
-        [IO.Compression.ZipFile]::ExtractToDirectory($archive, $expanded)
-        $bridge = Join-Path $expanded ("fieldcraft-ngsolve-" + $identity.bridge)
-        if (-not (Test-Path -LiteralPath "$bridge\workflow.py" -PathType Leaf)) { throw 'Missing workflow.py in the pinned bridge.' }
-        Copy-Item -LiteralPath $bridge -Destination (Join-Path $application 'bridge') -Recurse
+        if ($legacyBridge) {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $expanded = Join-Path $temp 'bridge'
+            [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $temp 'bridge.zip'), $expanded)
+            $bridge = Join-Path $expanded ("fieldcraft-ngsolve-" + $identity.bridge)
+            if (-not (Test-Path -LiteralPath "$bridge\workflow.py" -PathType Leaf)) { throw 'Missing workflow.py in the pinned bridge.' }
+            Copy-Item -LiteralPath $bridge -Destination (Join-Path $application 'bridge') -Recurse
+        } else {
+            Copy-Item -LiteralPath "$PSScriptRoot\examples" -Destination $application -Recurse
+        }
         foreach ($name in 'fieldcraft.exe','fieldcraft-cli.exe') {
             Assert-Hash (Join-Path $PSScriptRoot $name) $identity.files.$name
             Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $application
@@ -201,7 +210,8 @@ try {
         $folder = Join-Path ([Environment]::GetFolderPath('Programs')) 'FieldCraft with NGSolve (network)'
         [IO.Directory]::CreateDirectory($folder) | Out-Null
         $shell = New-Object -ComObject WScript.Shell
-        foreach ($item in @(@('FieldCraft','fieldcraft.exe'),@('Solver examples','bridge\samples'))) {
+        $examples = if ($legacyBridge) { 'bridge\samples' } else { 'examples' }
+        foreach ($item in @(@('FieldCraft','fieldcraft.exe'),@('Solver examples',$examples))) {
             $link = $shell.CreateShortcut((Join-Path $folder ($item[0] + '.lnk')))
             $link.TargetPath = Join-Path $application $item[1]
             $link.WorkingDirectory = $application
