@@ -2379,7 +2379,9 @@ impl ModelApp {
     pub fn logic(&mut self, ctx: &egui::Context) {
         let _lang = crate::i18n::scope(&self.prefs.language);
         let now = ctx.input(|i| i.time);
-        self.session.advance_external_series(now - self.now);
+        if fieldcraft_engine::external_view::visible(&self.session).is_none() {
+            self.session.advance_external_series(now - self.now);
+        }
         self.now = now;
         if self.styled != Some(self.ui.dark) {
             theme::apply(ctx, self.ui.dark);

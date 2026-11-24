@@ -326,6 +326,22 @@ mod tests {
     }
 
     #[test]
+    fn workspace_fields_and_imported_vtu_can_share_a_project() {
+        let (_dir, mut session, manifest, _) = fixture();
+        let pvd = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/recipes/vtu-bending-strip/bending.pvd");
+        session.execute("results.external.integrals", &json!({"path":manifest})).unwrap();
+        session.execute("results.import.vtu", &json!({"path":pvd})).unwrap();
+        for command in ["results.external.series", "results.external.contour"] {
+            session.execute("results.external.view", &json!({"frame":1, "show":true})).unwrap();
+            assert!(crate::external_view::visible(&session).is_some());
+            session.execute(command, &json!({"entry":"B"})).unwrap();
+            assert!(crate::external_view::visible(&session).is_none());
+            assert!(session.external_contour().is_some());
+            assert_eq!(session.external_results().unwrap().frames.len(), 2);
+        }
+    }
+
+    #[test]
     fn selecting_an_external_result_requires_exactly_one_source() {
         let (_dir, mut session, _path, _run) = fixture();
         for command in ["results.external.contour", "results.external.series"] {
