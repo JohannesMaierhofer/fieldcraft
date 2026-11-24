@@ -59,6 +59,15 @@ if ((Get-FileHash $launcher).Hash -ne (Get-FileHash "$work/saved-launcher.cmd").
 
 Push-Location $work
 try {
+    $fixture = (Resolve-Path "$root/crates/geometry/tests/designs/solidcraft-0.48.1/box.solidcraft").Path
+    $design = @(
+        @{ command='geometry.open'; params=@{ path=$fixture } }
+        @{ command='geometry.tessellate'; params=@{ body='Box'; tolerance=0.05 } }
+    )
+    ConvertTo-Json -InputObject $design -Depth 4 | Set-Content -Encoding utf8 solidcraft.json
+    & $cli run solidcraft.json
+    [ordered]@{ desktop=$receipt.desktop; file_sha256=(Get-FileHash $fixture).Hash.ToLowerInvariant(); body='Box' } |
+        ConvertTo-Json | Set-Content -Encoding utf8 "$proof/solidcraft-0.48.1.json"
     Copy-Item "$app/examples/*" $work
     & $cli run slab.json
     & $launcher run slab.analysis.json result
