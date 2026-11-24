@@ -5,6 +5,10 @@ crates/decks/tests/golden/nastran/*.bdf text eol=lf
 
 # Persistent geometry names are byte-exact compatibility expectations, always LF.
 crates/geometry/tests/names/*.txt text eol=lf
+crates/geometry/tests/designs/solidcraft-0.48.1/box.solidcraft -text
+
+# All five installers carry the same published solver notice.
+packaging/ngsolve/SOLVER-NOTICES.txt text eol=lf
 
 # Preserve signed payload/signature bytes without Git text normalization.
 crates/update/tests/data/SHA256SUMS.txt -text

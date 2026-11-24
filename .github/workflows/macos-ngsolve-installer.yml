@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       desktop_run:
-        description: Repackage native DMGs from this matching installer workflow run
+        description: Repackage native DMGs from a workflow run on the same commit
         type: string
         required: false
 permissions:
@@ -28,7 +28,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DESKTOP_RUN: ${{ inputs.desktop_run }}
-          BEFORE: ${{ github.event.before }}
         run: bash packaging/macos/ngsolve/desktop-artifacts.sh
   package:
     needs: source
@@ -39,15 +38,20 @@ jobs:
         include:
           - os: macos-15-intel
             arch: x86_64
+            label: intel
             rust_target: x86_64-apple-darwin
             package_arch: x86_64
           - os: macos-15
             arch: arm64
+            label: arm64
             rust_target: aarch64-apple-darwin
             package_arch: aarch64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     env:
+      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r4
+      FIELDCRAFT_BUILD_SHA: ${{ github.sha }}
+      INSTALLER: FieldCraft-NGSolve-0.8.1-r4-${{ matrix.label }}.pkg
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
       CARGO_PROFILE_RELEASE_LTO: 'false'
@@ -93,26 +97,32 @@ jobs:
           app="$RUNNER_TEMP/target/macos-package/FieldCraft.app"
           mkdir -p dist
           cp packaging/ngsolve/SOLVER-NOTICES.txt dist/
-          packaging/macos/ngsolve-package.sh --arch "$ARCH" --app "$app" --output "dist/FieldCraft-NGSolve-$ARCH.pkg"
+          packaging/macos/ngsolve-package.sh --arch "$ARCH" --app "$app" --output "dist/$INSTALLER" --package-version 0.8.1.4 --desktop-revision "$GITHUB_SHA"
+          (cd dist && shasum -a 256 "$INSTALLER" > "$INSTALLER.sha256")
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fieldcraft-ngsolve-macos-${{ matrix.arch }}-${{ github.sha }}
           path: |
             dist/FieldCraft-NGSolve-*.pkg
+            dist/FieldCraft-NGSolve-*.pkg.sha256
             dist/SOLVER-NOTICES.txt
           if-no-files-found: error
       - name: Install the native product and solve the bundled electric slab
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          sudo /usr/sbin/installer -pkg "dist/FieldCraft-NGSolve-$ARCH.pkg" -target /
-          pkgutil --pkg-info org.tangency-labs.fieldcraft.app
+          sudo /usr/sbin/installer -pkg "dist/$INSTALLER" -target /
+          pkgutil --pkg-info org.tangency-labs.fieldcraft.app | grep -Fx 'version: 0.8.1.4'
           home="/Library/Application Support/FieldCraft/NGSolve"
           cmp "packaging/macos/ngsolve/$ARCH.lock" "$home/current/runtime.lock"
           cmp dist/SOLVER-NOTICES.txt "$home/current/NOTICE.txt"
           app=/Applications/FieldCraft.app
           cli="$app/Contents/MacOS/fieldcraft-cli"
           lipo "$cli" -verify_arch "$ARCH"
+          test "$("$cli" --version)" = "fieldcraft-cli $FIELDCRAFT_VERSION"
+          jq -n --arg path "$PWD/crates/geometry/tests/designs/solidcraft-0.48.1/box.solidcraft" \
+            '[{command:"geometry.open",params:{path:$path}},{command:"geometry.tessellate",params:{body:"Box",tolerance:0.05}}]' > "$RUNNER_TEMP/open-solidcraft.json"
+          "$cli" run "$RUNNER_TEMP/open-solidcraft.json"
           "$home/python/bin/python3" -I -c 'import platform,sys; assert platform.machine() == sys.argv[1]' "$ARCH"
           pwsh -File packaging/ngsolve/fixtures.ps1 -Directory "$RUNNER_TEMP/slab" -Scenario electrostatic
           cd "$RUNNER_TEMP/slab"

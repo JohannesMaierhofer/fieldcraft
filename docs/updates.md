@@ -5,7 +5,7 @@
 Install the new complete package for your platform from the fork’s release page. It updates the
 native app, bridge and private solver together. In this fork, public update checks and
 self-install commands direct you to the manual installer. Automatic checks default to off.
-The update protocol below describes the upstream FieldCraft distribution. [Fork installers](https://github.com/JohannesMaierhofer/fieldcraft/releases)
+The update protocol below describes the upstream FieldCraft distribution. [Fork installers](https://github.com/Maierhofer-Technology/fieldcraft/releases)
 
 ## Upstream FieldCraft
 

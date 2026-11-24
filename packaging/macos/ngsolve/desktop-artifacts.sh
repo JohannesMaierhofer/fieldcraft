@@ -3,27 +3,14 @@
 set -euo pipefail
 base="repos/$GITHUB_REPOSITORY/actions"
 run="${DESKTOP_RUN:-}"
-if [[ "$GITHUB_REF_NAME" == codex/ngsolve-macos-recheck-* ]]; then
-    run=${GITHUB_REF_NAME#codex/ngsolve-macos-recheck-}
-fi
-desktop_paths=(. ':(exclude).github/workflows/macos-ngsolve-installer.yml' ':(exclude).github/workflows/ngsolve-platforms.yml'
-    ':(exclude)packaging/ngsolve' ':(exclude)packaging/macos/ngsolve' ':(exclude)packaging/macos/ngsolve-package.sh')
-same_desktop() {
-    git diff --quiet "$1" HEAD -- "${desktop_paths[@]}"
-}
-if [[ -z "$run" && "${BEFORE:-}" =~ ^[0-9a-f]{40}$ && "${BEFORE:-}" != 0000000000000000000000000000000000000000 ]] && same_desktop "$BEFORE"; then
-    desktop=$(git log -1 --format=%H "$BEFORE" -- "${desktop_paths[@]}")
-    run=$(gh api "$base/workflows/macos-ngsolve-installer.yml/runs?head_sha=$desktop&per_page=20" \
-        --jq '[.workflow_runs[] | select(.head_branch=="codex/ngsolve-installers" and .event=="push")][0].id // empty')
-fi
 if [[ -z "$run" ]]; then exit 0; fi
 [[ "$run" =~ ^[0-9]+$ ]]
 metadata=$(gh api "$base/runs/$run")
-jq -e '.head_branch=="codex/ngsolve-installers" and .path==".github/workflows/macos-ngsolve-installer.yml" and (.event=="push" or .event=="workflow_dispatch")' <<< "$metadata" >/dev/null
-sha=$(jq -r '.head_sha' <<< "$metadata")
-[[ "$sha" =~ ^[0-9a-f]{40}$ ]]
-git cat-file -e "$sha^{commit}"
-same_desktop "$sha" || { echo "The selected run built a different desktop source tree" >&2; exit 1; }
+jq -e --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+    .head_sha == $sha and .head_repository.full_name == $repo and
+    .path == ".github/workflows/macos-ngsolve-installer.yml" and .event == "workflow_dispatch"
+' <<< "$metadata" >/dev/null || { echo "The selected macOS run must build this exact release commit." >&2; exit 1; }
+sha=$GITHUB_SHA
 for ((attempt=0; attempt<120; attempt++)); do
     records=$(gh api "$base/runs/$run/artifacts?per_page=100")
     ok=true

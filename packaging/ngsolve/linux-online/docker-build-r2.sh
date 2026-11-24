@@ -24,7 +24,7 @@ trap 'rm -rf -- "$stage"' EXIT
 if ! git -C "$repo" cat-file -e "$desktop^{commit}" 2>/dev/null; then
     src_repo=$stage/source.git
     git init -q --bare "$src_repo"
-    git -C "$src_repo" fetch --quiet --depth=1 --no-tags https://github.com/JohannesMaierhofer/fieldcraft.git "$desktop"
+    git -C "$src_repo" fetch --quiet --depth=1 --no-tags https://github.com/Maierhofer-Technology/fieldcraft.git "$desktop"
 fi
 {
     git -C "$src_repo" rev-parse "$desktop" "$desktop^{tree}"

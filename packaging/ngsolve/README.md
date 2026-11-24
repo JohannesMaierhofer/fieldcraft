@@ -1,8 +1,8 @@
 # FieldCraft with an external NGSolve runtime
 
-The current Windows and Linux recipes build installers with the private interpreter. The macOS package fetches its checksummed runtime during setup. [macOS packaging](../macos/ngsolve/README.md) · [Earlier r2 network installers](https://github.com/JohannesMaierhofer/fieldcraft/releases/tag/ngsolve-v0.8.1-r2)
+R4 installs FieldCraft and downloads its private, checksummed Python runtime on Windows, Linux, and macOS. [Downloads](https://github.com/Maierhofer-Technology/fieldcraft/releases/latest) · [macOS packaging](../macos/ngsolve/README.md)
 
-The Windows installer sets up FieldCraft for the current user. Start it from the Start menu. The Linux amd64 package supports Ubuntu 22.04 or later. Install it with `sudo apt install ./fieldcraft-ngsolve-linux-x64.deb` and select **FieldCraft with NGSolve** from the applications menu. Both installers carry the application, command-line interface and a private CPython environment with the pinned wheels. On Linux, apt resolves the system graphics libraries.
+The Windows installer sets up FieldCraft for the current user. Start it from the Start menu. The Linux amd64 package supports Ubuntu 22.04 or later. Install it with `sudo apt install ./FieldCraft-NGSolve-0.8.1-r4-linux-x64-network.deb` and select **FieldCraft with NGSolve** from the applications menu. Both installers include the application and command-line interface. On Linux, apt resolves the system graphics libraries.
 
 | Installer | Native FieldCraft app and CLI | External solver |
 |---|---|---|
@@ -22,11 +22,10 @@ Run the same analysis headlessly with the installed launcher. The output directo
 fieldcraft-ngsolve run slab.analysis.json first-run
 ```
 
-On Windows, use the launcher in the installation folder.
+On Windows, open PowerShell in the version directory containing the installed desktop executable. The default installation places its versions under `%LOCALAPPDATA%\Programs\FieldCraft-NGSolve-Network`.
 
 ```powershell
-$fc = Join-Path $env:LOCALAPPDATA 'Programs/FieldCraft-NGSolve'
-& "$fc/fieldcraft-ngsolve.cmd" run slab.analysis.json first-run
+.\fieldcraft-ngsolve.cmd run C:\Studies\Slab\slab.analysis.json C:\Studies\Slab\first-run
 ```
 
 For another interpreter, invoke the platform's FieldCraft CLI as `fieldcraft-cli ngsolve run slab.analysis.json first-run --python /path/to/python`. Open the output manifest from the matching model's Python Workspace to view the result later.

@@ -60,6 +60,13 @@ try {
     }
     $runtime | ConvertTo-Json | Set-Content runtime.json
     & $cli --version
+    $design = Join-Path $root 'crates/geometry/tests/designs/solidcraft-0.48.1/box.solidcraft'
+    $commands = @(
+        @{ command='geometry.open'; params=@{path=$design} }
+        @{ command='geometry.tessellate'; params=@{body='Box'; tolerance=0.05} }
+    )
+    ConvertTo-Json -InputObject $commands -Depth 4 | Set-Content -Encoding utf8 open-solidcraft.json
+    & $cli run open-solidcraft.json
     & "$PSScriptRoot/fixtures.ps1" -Directory $out -Scenario electrostatic
     & $cli run slab.json
     & $launcher run slab.analysis.json first-run

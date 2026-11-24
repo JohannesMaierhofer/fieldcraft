@@ -32,11 +32,11 @@ jobs:
       - name: Fetch native metadata for offline UI checks
         run: cargo metadata --locked --format-version 1 --filter-platform x86_64-unknown-linux-gnu --manifest-path crates/ui-egui/Cargo.toml > /dev/null
       - name: Test touched crates
-        run: cargo test --locked --profile ci -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui -p fieldcraft-update
+        run: cargo test --locked --profile ci -p fieldcraft-geometry -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui -p fieldcraft-update
       - name: Check touched crates with clippy
         id: clippy
         if: ${{ !cancelled() }}
-        run: cargo clippy --locked --profile ci -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui -p fieldcraft-update --all-targets -- -D warnings
+        run: cargo clippy --locked --profile ci -p fieldcraft-geometry -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui -p fieldcraft-update --all-targets -- -D warnings
       - name: Collect downstream diagnostics after a lint failure
         if: ${{ failure() && steps.clippy.outcome == 'failure' }}
-        run: cargo clippy --locked --profile ci -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui -p fieldcraft-update --all-targets
+        run: cargo clippy --locked --profile ci -p fieldcraft-geometry -p fieldcraft-engine -p fieldcraft-render -p fieldcraft-ui-egui -p fieldcraft-update --all-targets

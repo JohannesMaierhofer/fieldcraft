@@ -36,9 +36,9 @@ pub use release::{Asset, Check, Release};
 pub use version::{NIGHTLY, Version};
 
 /// The repository releases come from.
-pub const REPO: &str = "JohannesMaierhofer/fieldcraft";
+pub const REPO: &str = "Maierhofer-Technology/fieldcraft";
 /// The complete app and external solver installer for this distribution.
-pub const RELEASES_URL: &str = "https://github.com/JohannesMaierhofer/fieldcraft/releases";
+pub const RELEASES_URL: &str = "https://github.com/Maierhofer-Technology/fieldcraft/releases";
 /// The GitHub API.
 pub const DEFAULT_HOST: &str = "https://api.github.com";
 /// Replaces [`DEFAULT_HOST`] (and allows plain `http`), for tests against a local server only.

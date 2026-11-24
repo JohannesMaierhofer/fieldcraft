@@ -1,111 +1,62 @@
 name: External solver installers
 on:
-  # Community releases are assembled locally. A maintainer can request a hosted check.
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  package:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            label: linux-x64
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-            label: windows-x64
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            label: windows-arm64
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+  windows:
+    uses: ./.github/workflows/ngsolve-r4-windows.yml
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
     env:
-      CARGO_BUILD_JOBS: '2'
-      CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
       CARGO_INCREMENTAL: '0'
-      CARGO_PROFILE_RELEASE_DEBUG: '0'
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
       CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
       FIELDCRAFT_TELEMETRY: '0'
+      FIELDCRAFT_VERSION: 0.8.1-ngsolve.r4
+      FIELDCRAFT_BUILD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Check out the GUI and CLI with mesh-bound fields and integrals
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          path: app-source
-          persist-credentials: false
-      - name: Restore the native app, CLI and notices
-        id: core-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          key: fieldcraft-core-${{ github.sha }}-rust1.99.1-${{ matrix.target }}
-          path: |
-            app-source/target/${{ matrix.target }}/release/fieldcraft
-            app-source/target/${{ matrix.target }}/release/fieldcraft.exe
-            app-source/target/${{ matrix.target }}/release/fieldcraft-cli
-            app-source/target/${{ matrix.target }}/release/fieldcraft-cli.exe
-            app-source/THIRD-PARTY-LICENSES.txt
       - uses: dtolnay/rust-toolchain@1.99.1
-        if: steps.core-cache.outputs.cache-hit != 'true'
-        with:
-          targets: ${{ matrix.target }}
-      - name: Build FieldCraft
-        if: steps.core-cache.outputs.cache-hit != 'true'
-        working-directory: app-source
-        run: cargo build --release --locked --target ${{ matrix.target }} -p fieldcraft -p fieldcraft-cli
-      - name: Collect FieldCraft dependency notices
-        if: steps.core-cache.outputs.cache-hit != 'true'
-        working-directory: app-source
-        run: cargo run --release --locked -p xtask -- licences
-      - name: Preserve the app before packaging and GUI tests
-        if: steps.core-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          key: fieldcraft-core-${{ github.sha }}-rust1.99.1-${{ matrix.target }}
-          path: |
-            app-source/target/${{ matrix.target }}/release/fieldcraft
-            app-source/target/${{ matrix.target }}/release/fieldcraft.exe
-            app-source/target/${{ matrix.target }}/release/fieldcraft-cli
-            app-source/target/${{ matrix.target }}/release/fieldcraft-cli.exe
-            app-source/THIRD-PARTY-LICENSES.txt
-      - name: Assemble the offline installer
+      - name: Build the desktop, CLI, and notices
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libudev-dev libasound2-dev libxkbcommon-x11-dev libvulkan-dev libgtk-3-dev dpkg-dev
+          cargo build --locked --release -p fieldcraft -p fieldcraft-cli
+          cargo xtask licences
+      - name: Build the network installer
+        run: bash packaging/ngsolve/linux-online/package-r4.sh target/release
+      - name: Install the package and exercise analysis and playback
         shell: pwsh
-        run: ./packaging/ngsolve/package.ps1 -Target '${{ matrix.target }}' -Label '${{ matrix.label }}'
-      - name: Install, solve the electric slab and exercise native transient playback
-        shell: pwsh
-        run: ./packaging/ngsolve/verify.ps1 -Label '${{ matrix.label }}'
-      - name: Install the Debian package in a minimal Ubuntu 22.04 image
-        if: runner.os == 'Linux'
-        shell: bash
+        run: ./packaging/ngsolve/verify.ps1 -Label linux-x64
+      - name: Install the package in clean Ubuntu and repeat the analysis
         run: |
           docker run --rm -v "$PWD/dist/ngsolve:/packages:ro" -v "$PWD/verification:/fixtures:ro" ubuntu:22.04 bash -ec '
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends /packages/*.deb
-            fieldcraft-ngsolve-cli --version
+            test "$(fieldcraft-ngsolve-cli --version)" = "fieldcraft-cli 0.8.1-ngsolve.r4"
             mkdir /tmp/slab && cd /tmp/slab
             cp /fixtures/slab.json /fixtures/slab.analysis.json /fixtures/potential.py .
             fieldcraft-ngsolve-cli run slab.json
             fieldcraft-ngsolve run slab.analysis.json first-run
           '
-      - name: Upload native window captures and numerical verification
+      - name: Upload verified installer, checksum, and notices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: fieldcraft-ngsolve-${{ matrix.label }}-verification
+          name: fieldcraft-ngsolve-linux-x64
+          path: dist/ngsolve/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Save verification results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: fieldcraft-ngsolve-linux-x64-verification
           path: |
             verification/*.json
             verification/*.png
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload the offline installer and checksum
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: fieldcraft-ngsolve-${{ matrix.label }}
-          path: dist/ngsolve/*
-          compression-level: 0
           if-no-files-found: error
           retention-days: 14

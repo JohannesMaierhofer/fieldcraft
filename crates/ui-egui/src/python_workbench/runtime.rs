@@ -100,6 +100,11 @@ impl Runtime {
         if let Some(root) = env::var_os("FIELDCRAFT_NGSOLVE_HOME") {
             roots.push(PathBuf::from(root));
         }
+        if let Ok(executable) = env::current_exe()
+            && let Some(parent) = executable.parent()
+        {
+            roots.push(parent.to_path_buf());
+        }
         #[cfg(target_os = "macos")]
         {
             roots.push(PathBuf::from("/Library/Application Support/FieldCraft/NGSolve"));
@@ -113,11 +118,6 @@ impl Runtime {
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         roots.push(PathBuf::from("/opt/fieldcraft-ngsolve"));
-        if let Ok(executable) = env::current_exe()
-            && let Some(parent) = executable.parent()
-        {
-            roots.push(parent.to_path_buf());
-        }
         roots
             .into_iter()
             .map(|root| root.join(relative))

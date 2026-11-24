@@ -23,7 +23,7 @@ if [[ -e "$out/$archive" ]]; then
 fi
 if [[ ! -d "$source/.git" ]]; then
     git init -q "$source"
-    git -C "$source" fetch --depth=1 https://github.com/JohannesMaierhofer/fieldcraft.git "$revision"
+    git -C "$source" fetch --depth=1 https://github.com/Maierhofer-Technology/fieldcraft.git "$revision"
     git -C "$source" checkout -q --detach FETCH_HEAD
 fi
 cd "$source"

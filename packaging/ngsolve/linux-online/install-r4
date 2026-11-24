@@ -1,0 +1,41 @@
+#!/bin/bash
+# Debian calls this script after installing the desktop and the runtime lock.
+set -euo pipefail
+[[ $1 == configure ]] || exit 0
+umask 022
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset PYTHONHOME PYTHONPATH VIRTUAL_ENV
+root=/var/lib/fieldcraft-ngsolve
+lock=/opt/fieldcraft-ngsolve/runtime-lock.json
+hash=$(sha256sum "$lock" | cut -d' ' -f1)
+dest="$root/runtimes/$hash"
+install -d -m 755 "$root/runtimes"
+stage=$(mktemp -d "$root/.install-XXXXXXXX")
+trap 'rm -rf "$stage"' EXIT
+verify_python() {
+    "$1" -I -B -m pip --isolated --disable-pip-version-check check
+    "$1" -I -B -m uv --version
+    "$1" -I -B -c 'import netgen, ngsolve, numpy; from netgen.geom2d import unit_square; assert abs(ngsolve.Integrate(1, ngsolve.Mesh(unit_square.GenerateMesh(maxh=.5))) - 1) < 1e-12'
+}
+if [[ ! -d "$dest" ]]; then
+    mkdir "$stage/archive" "$stage/payload"
+    jq -er '.linux | ([.runtime + {name:"python.tar.gz"}] + .wheels)[] | [.sha256,.name,.url] | @tsv' "$lock" > "$stage/downloads"
+    while IFS=$'\t' read -r digest name url; do
+        [[ "$digest" =~ ^[0-9a-f]{64}$ && "$name" =~ ^[A-Za-z0-9_.+-]+$ ]]
+        curl --disable --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
+            --retry 3 --connect-timeout 20 --max-time 600 --output "$stage/archive/$name" "$url"
+        printf '%s  %s\n' "$digest" "$stage/archive/$name" | sha256sum --check --status
+    done < "$stage/downloads"
+    tar --no-same-owner -xzf "$stage/archive/python.tar.gz" -C "$stage/payload"
+    py="$stage/payload/python/bin/python3"
+    "$py" -I -B -m ensurepip
+    "$py" -I -B -m pip --isolated --disable-pip-version-check install \
+        --no-index --no-deps --no-compile --no-cache-dir "$stage/archive/"*.whl
+    verify_python "$py"
+    install -m 644 "$lock" "$stage/payload/runtime-lock.json"
+    mv -T "$stage/payload" "$dest"
+fi
+cmp "$lock" "$dest/runtime-lock.json"
+verify_python "$dest/python/bin/python3"
+ln -s "runtimes/$hash" "$stage/current"
+mv -Tf "$stage/current" "$root/current"

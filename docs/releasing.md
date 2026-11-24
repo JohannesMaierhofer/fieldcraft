@@ -2,29 +2,29 @@
 
 ## NGSolve community fork
 
-Johannes Maierhofer publishes the community build from `main`. Tags use
+Maierhofer Technology publishes the community build from `main`. Tags use
 `ngsolve-v<upstream version>-r<fork revision>`. Keep published tags immutable
 and use the next fork revision for a replacement binary.
 
 Build the desktop and command-line binaries from the exact integration commit.
-The r3 release covers Intel macOS. The installer fetches the locked Python and
-NGSolve distributions from their publishers during setup. Earlier bridge-based
-installers and their build information remain available on the r2 release page.
-[r2 release](https://github.com/JohannesMaierhofer/fieldcraft/releases/tag/ngsolve-v0.8.1-r2)
+R4 covers macOS Intel and Apple silicon, Windows x64 and ARM64, and Linux amd64.
+Each network installer fetches its pinned runtime during setup. Use the macOS
+NGSolve and External solver installer workflows on the same release commit.
+[Fork releases](https://github.com/Maierhofer-Technology/fieldcraft/releases)
 
 On the Intel Mac, use the repository toolchain and pass the same desktop
 revision to both packaging scripts.
 
 ```sh
 export CARGO_TARGET_DIR="$PWD/target"
-export FIELDCRAFT_VERSION=0.8.1-ngsolve.r3
+export FIELDCRAFT_VERSION=0.8.1-ngsolve.r4
 export FIELDCRAFT_BUILD_SHA="$(git rev-parse HEAD)"
 cargo xtask licences
 packaging/macos/package.sh --arch x86_64
 packaging/macos/ngsolve-package.sh --arch x86_64 \
   --app "$CARGO_TARGET_DIR/macos-package/FieldCraft.app" \
-  --package-version 0.8.1.3 --desktop-revision "$FIELDCRAFT_BUILD_SHA" \
-  --output "$PWD/dist/release/FieldCraft-NGSolve-0.8.1-r3-intel.pkg"
+  --package-version 0.8.1.4 --desktop-revision "$FIELDCRAFT_BUILD_SHA" \
+  --output "$PWD/dist/release/FieldCraft-NGSolve-0.8.1-r4-intel.pkg"
 ```
 
 Exercise an analysis with a known reference value and open its fields in the
