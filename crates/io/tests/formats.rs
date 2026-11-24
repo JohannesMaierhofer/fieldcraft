@@ -674,6 +674,9 @@ fn outputs_never_replace_a_model_or_a_design() {
     std::fs::write(&design, b"{\n  \"format\": \"solidcraft/21\",\n  \"features\": []\n}").unwrap();
     let named_design = dir.join("empty.SolidCraft");
     std::fs::write(&named_design, b"").unwrap();
+    // Newer SolidCraft saves designs as `.sc`, not always JSON: known by the name alone.
+    let sc_design = dir.join("bracket.SC");
+    std::fs::write(&sc_design, b"").unwrap();
     let named_model = dir.join("blank.FIELDCRAFT");
     std::fs::write(&named_model, b"").unwrap();
     for (path, kind) in [
@@ -682,12 +685,31 @@ fn outputs_never_replace_a_model_or_a_design() {
         (&named_model, "FieldCraft model"),
         (&design, "SolidCraft design"),
         (&named_design, "SolidCraft design"),
+        (&sc_design, "SolidCraft design"),
     ] {
         assert_eq!(protected_kind(path), Some(kind), "{}", path.display());
         let before = std::fs::read(path).unwrap();
         let e = write_output(path, b"*HEADING").unwrap_err();
         assert!(e.to_string().contains(kind) && e.to_string().contains("choose another file name"), "{e}");
         assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+    for (name, kind) in [("part.StEp", "STEP"), ("part.STP", "STEP"), ("part.IGES", "IGES"), ("part.IgS", "IGES")] {
+        let path = dir.join(name);
+        assert_eq!(protected_kind(&path), None);
+        std::fs::write(&path, b"original").unwrap();
+        assert!(write_output(&path, b"new output").unwrap_err().to_string().contains(kind));
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+    }
+    // A confined read or write can follow a CAD symlink to a target with no suffix.
+    for (header, kind) in [
+        ("ISO-10303-21;\nHEADER;".to_string(), "STEP"),
+        (format!("{:<72}S      1\r\n", "Block"), "IGES"),
+        (format!("{:<72}S0000001\n", "Block"), "IGES"),
+    ] {
+        let target = dir.join("geometry");
+        std::fs::write(&target, &header).unwrap();
+        assert!(write_output(&target, b"new output").unwrap_err().to_string().contains(kind));
+        assert_eq!(std::fs::read_to_string(target).unwrap(), header);
     }
     assert_eq!(std::fs::read(&model).unwrap(), original);
     // Other files, and new ones, are written as before.

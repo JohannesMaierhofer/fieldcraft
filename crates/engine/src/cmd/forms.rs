@@ -33,11 +33,12 @@ macro_rules! existing {
 pub const SET_DELETE: &[Field] = existing!("Set", C::Set);
 pub const MATERIAL_DELETE: &[Field] = existing!("Material", C::Material);
 pub const MATERIAL_LIBRARY_LIST: &[Field] =
-    &[choice("family", "Family", fieldcraft_model::library::FAMILIES).help("Optional family filter; empty lists all nine cited entries.")];
+    &[choice("family", "Family", fieldcraft_model::library::FAMILIES).help("Optional family filter; empty lists every cited entry.")];
 pub const MATERIAL_LIBRARY: &[Field] = &[
-    choice("entry", "Library entry", fieldcraft_model::library::CHOICES).req().help("Cited constant isotropic properties, with product/temper/temperature limits in the report. Missing data stays absent; strengths never enable plasticity or damage."),
+    choice("entry", "Library entry", fieldcraft_model::library::CHOICES).req().help("Cited isotropic properties and temperature curves, with product/temper/temperature limits in the report. Missing data stays absent; strengths never enable plasticity or damage."),
     text("name", "Material name").hint("entry id").help("Optional unique name; empty uses the stable library entry id."),
     num("reference_temperature", "Stress-free temperature", D::Temperature).hint("20 degC").help("Your modelling choice: temperature of zero thermal strain. Defaults to 20 degrees Celsius, regardless of display units."),
+    num("temperature", "Property temperature", D::Temperature).hint("20 degC").help("Where temperature-dependent properties give their constants (the material keeps the whole curves: heat transfer follows them). Defaults to 20 degrees Celsius, regardless of display units."),
 ];
 pub const SECTION_DELETE: &[Field] = existing!("Section", C::Section);
 pub const REFERENCE_POINT_DELETE: &[Field] = existing!("Reference point", C::ReferencePoint);
@@ -708,6 +709,7 @@ const FACE_CONDITION: &[Variant] = &[
     variant("wall", "Wall", &[]),
     variant("moving_wall", "Moving wall", &[xyz("velocity", "Velocity", D::Velocity).help("The velocity of the moving wall.").req()]),
     variant("slip", "Slip", &[]),
+    variant("symmetry", "Symmetry plane", &[]),
     variant(
         "velocity",
         "Velocity inlet",
@@ -723,11 +725,14 @@ const FACE_CONDITION: &[Variant] = &[
         "Pressure outlet",
         &[
             num("pressure", "Pressure", D::Stress).help("Pressure at the outlet, relative to the domain's reference.").req().def("0"),
-            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective")])
+            choice("outflow", "Outflow", &[("uniform", "Uniform"), ("convective", "Convective"), ("characteristic", "Characteristic")])
                 .help(
-                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach.",
+                    "Uniform: the flow crosses the outlet normally. Convective: the flow leaves as it arrives, for outlets a wake or vortices reach. Characteristic: as uniform, but outgoing pressure waves leave instead of reflecting (CPU only, no checkpoints).",
                 )
                 .def("\"uniform\""),
+            above("sigma", "Relaxation σ", D::None, 0.0, 1.0)
+                .help("A characteristic outflow only: how fast its pressure relaxes to the outlet's (above 0, at most 1). Smaller reflects less of the slow waves but lets the mean pressure drift further.")
+                .hint("0.25"),
         ],
     ),
     variant("periodic", "Periodic", &[]),
@@ -1202,8 +1207,8 @@ const PROCEDURE: Field = variants(
                 choice("collision", "Collision", &[("trt", "Two relaxation times"), ("regularized", "Regularized"), ("hrr", "Hybrid regularized")])
                     .help("The lattice Boltzmann collision. Regularized stays stable with τ close to ½ (fast flows on coarse grids, sharp corners), at a little more cost per step. Hybrid regularized blends in the strain rate of finite differences (σ), which damps the shortest waves.")
                     .def("\"trt\""),
-                choice("walls", "Obstacle walls", &[("halfway", "Halfway"), ("interpolated", "Interpolated")])
-                    .help("Where the links into obstacles bounce back. Halfway puts every wall halfway between cells, a staircase on curved walls. Interpolated puts it where the surface crosses each link (Bouzidi et al. 2001): curved walls second order, best with τ ≤ 1; not mass conservative; on the CPU and the GPU.")
+                choice("walls", "Obstacle walls", &[("halfway", "Halfway"), ("interpolated", "Interpolated"), ("interpolated_quadratic", "Interpolated, quadratic")])
+                    .help("Where the links into obstacles bounce back. Halfway puts every wall halfway between cells, a staircase on curved walls. Interpolated puts it where the surface crosses each link (Bouzidi et al. 2001): curved walls second order, best with τ ≤ 1; not mass conservative; on the CPU and the GPU. Interpolated, quadratic reads three nodes in line (CPU and GPU), closer to the exact flow rate on walls off the grid; walls at rest only.")
                     .def("\"halfway\""),
                 positive("magic", "TRT Λ", D::None).help("The two-relaxation-time magic parameter; 0.1875 is usual.").hint("0.1875"),
                 range("sigma", "HRR σ", D::None, 0.0, 1.0)
@@ -2760,8 +2765,13 @@ pub const DECK: &[Field] = &[
 ];
 
 pub const DECK_READ: &[Field] = &[
-    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")]).help("The model-data input format to read.").req().def("\"abaqus\""),
-    path("path", "Input deck", false).help("Flat Abaqus model data; replaces the current model only after a successful read.").req(),
+    choice("format", "Format", &[("abaqus", "Abaqus input (.inp)")])
+        .help("The Abaqus model-data and writer-linear-history input format to read.")
+        .req()
+        .def("\"abaqus\""),
+    path("path", "Input deck", false)
+        .help("Abaqus model data plus writer linear history; replaces the current model only after a successful read.")
+        .req(),
     choice(
         "units",
         "Input units",
@@ -2828,6 +2838,15 @@ pub const SOLVE_HISTORY: &[Field] = &[
     references("sets", "Sets", C::Set)
         .help("Nonlinear static steps: the sets whose mean displacement and reaction sum to give per frame; the boundary-condition sets when none."),
     int("node", "Node", 1, 4_294_967_295).help("Nonlinear static steps: a node whose displacement to give per frame."),
+];
+const OMEGA: Field = above("", "Angular frequency", D::None, 0.0, std::f64::consts::PI).help("Radians per lattice step, above 0 and at most π.");
+pub const OUTLET_REFLECTION: &[Field] = &[
+    above("sigma", "Relaxation σ", D::None, 0.0, 1.0)
+        .help("The characteristic outlet's relaxation, above 0 and at most 1 (0.25 is the outflow's default).")
+        .req(),
+    list("omegas", "Angular frequencies", &OMEGA, fieldcraft_lbm::reflection::MAX_FREQUENCIES)
+        .help("At most 16 angular frequencies, above 0 and at most π radians per lattice step; defaults to [0.01, 0.02, 0.04].")
+        .hint("[0.01, 0.02, 0.04]"),
 ];
 pub const SOLVE_FLUID: &[Field] = &[
     STEP,

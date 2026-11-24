@@ -125,11 +125,11 @@ fn tridiagonal_qr(d: &mut [f64], e: &mut [f64], q: &mut [f64], n: usize) -> Resu
         let dd = (d[h - 1] - d[h]) / 2.0;
         let eh = e[h - 1];
         let sign = if dd >= 0.0 { 1.0 } else { -1.0 };
-        let mu = d[h] - eh * eh / (dd + sign * dd.hypot(eh));
+        let mu = d[h] - eh * eh / (dd + sign * libm::hypot(dd, eh));
         let mut x = d[l] - mu;
         let mut z = e[l];
         for k in l..h {
-            let r = x.hypot(z);
+            let r = libm::hypot(x, z);
             let (c, s) = if r == 0.0 { (1.0, 0.0) } else { (x / r, -z / r) };
             if k > l {
                 e[k - 1] = c * e[k - 1] - s * z;
@@ -190,6 +190,11 @@ pub trait Operator: Sync {
     fn mass(&self, x: &[f64], y: &mut [f64]);
     /// x ← (K − σM)⁻¹ x.
     fn solve(&self, x: &mut [f64]) -> Result<()>;
+    /// [`Self::solve`] for each of `xs`, each the same bit for bit as alone (an operator whose
+    /// factor can solve several at once reads it once for them).
+    fn solve_many(&self, xs: &mut [Vec<f64>]) -> Result<()> {
+        xs.iter_mut().try_for_each(|x| self.solve(x))
+    }
     /// The right-hand side the operator solves for, given a basis vector `x` and its M product
     /// `mx`: M x for the spectral transformation (the default); another matrix's product for
     /// other pencils (buckling, [`crate::buckle`]).
@@ -300,12 +305,18 @@ pub fn lanczos(op: &impl Operator, shift: f64, wanted: Wanted, block: usize, max
         let j0 = q.len();
         // W = Op Q_j.
         let mut w: Vec<Vec<f64>> = Vec::with_capacity(b);
-        // The block's solves are independent: one task each.
-        for y in fieldcraft_parallel::map(mcur.len(), |i| {
-            let mut y = op.operand(cur.get(i).map(Vec::as_slice).unwrap_or_default(), mcur.get(i).map(Vec::as_slice).unwrap_or_default());
-            op.solve(&mut y).map(|()| y)
+        // The block's solves are independent: as many groups as threads (at most one per
+        // vector), each group's vectors solved together so the factor is read once for them.
+        // A vector's solve is the same bit for bit in any group, so the grouping may follow the
+        // thread count.
+        let size = mcur.len().div_ceil(fieldcraft_parallel::current_threads().clamp(1, mcur.len().max(1))).max(1);
+        for group in fieldcraft_parallel::map(mcur.len().div_ceil(size), |g| {
+            let mut ys: Vec<Vec<f64>> = (g * size..((g + 1) * size).min(mcur.len()))
+                .map(|i| op.operand(cur.get(i).map(Vec::as_slice).unwrap_or_default(), mcur.get(i).map(Vec::as_slice).unwrap_or_default()))
+                .collect();
+            op.solve_many(&mut ys).map(|()| ys)
         }) {
-            w.push(y?);
+            w.extend(group?);
         }
         // A_j = Q_jᵀ M W (symmetrized), W −= Q_j A_j (the earlier blocks go in the full
         // reorthogonalization below).

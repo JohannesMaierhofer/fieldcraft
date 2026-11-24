@@ -67,6 +67,11 @@ pub trait Backend {
     fn eddy_viscosity_ratio(&self) -> f64 {
         0.0
     }
+    /// With the Spalart–Allmaras model: ν̃ per cell (lattice units, 0 outside the fluid); `None`
+    /// without it. A backend without the model refuses a flow with one when it is made.
+    fn nu_tilde(&mut self) -> Result<Option<Vec<f64>>> {
+        Ok(None)
+    }
     /// With a phase change: the mean over the fluid cells of the solid fraction now. A backend
     /// without melting and freezing refuses a flow with them when it is made, so the default is
     /// none.
@@ -106,12 +111,21 @@ pub trait Backend {
     fn viscosity_clamps(&self) -> Option<crate::rheology::Clamps> {
         None
     }
+    /// With a characteristic outlet: how many cell updates did not advance its state, because its
+    /// balance was not finite and positive or the cell has no fluid cell inside it. A backend without one refuses such a flow when it is
+    /// made, so the default is none.
+    fn characteristic_held(&self) -> u64 {
+        0
+    }
     fn groups(&self) -> &[Group];
     fn fluid_cells(&self) -> usize;
     fn is_fluid(&self, cell: usize) -> bool;
     /// The cells of each obstacle that conducts heat (in the setup's order of solids), in cell
     /// order; a backend that does not conduct refuses such a flow when it is made and has none.
     fn conducting(&self) -> &[Vec<u32>];
+    /// Per conducting solid, the share of its power generated in the box (less than 1 when a
+    /// symmetry plane cuts it); empty without conducting solids.
+    fn power_share(&self) -> &[f64];
     /// Obstacles that cover no cell centre.
     fn empty_obstacles(&self) -> &[String];
     /// With interpolated walls, how the obstacles' links bounce back (a backend runs the links
@@ -191,6 +205,9 @@ pub fn backend(choice: Choice, flow: Flow, setup: &Setup) -> Result<Box<dyn Back
         Choice::Cpu => Ok(Box::new(flow)),
         // No device backend has the sheets' exchange yet: refused before one is asked for.
         Choice::Device if flow.has_baffles() => Err(Error::Invalid("baffles are not supported on the GPU yet: solve on the CPU".into())),
+        Choice::Device if setup.domain.characteristic_outlet().is_some() => {
+            Err(Error::Invalid("the characteristic outflow is not supported on the GPU yet: solve on the CPU".into()))
+        }
         Choice::Device => match backend_factory() {
             Some(make) => make(&flow, setup),
             None => Err(Error::Backend("no GPU backend is available in this build: solve on the CPU (`backend: \"cpu\"`)".into())),

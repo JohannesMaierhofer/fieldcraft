@@ -127,6 +127,18 @@ pub fn plate_design(p: &Plate) -> Result<Vec<u8>> {
     solidcraft_io::write_design_container(&doc).map_err(failed)
 }
 
+/// A 2 × 3 × 4 mm IGES solid named Pad.
+pub fn iges_block() -> Result<Vec<u8>> {
+    let shape = crate::block([0.0; 3], [2.0, 3.0, 4.0])?;
+    let text = solidcraft_kernel::guard("write sample IGES", || {
+        solidcraft_kernel::iges_export_bodies(
+            &[solidcraft_kernel::ExportBody { name: "Pad".into(), body: &shape.body, color: None }],
+            &solidcraft_kernel::StepHeader::default(),
+        )
+    })?;
+    Ok(text.into_bytes())
+}
+
 /// A STEP assembly with two occurrences of the same 2 × 3 × 4 mm block.
 /// The second component is translated along X by `offset` millimetres.
 pub fn step_assembly(offset: f64) -> Result<Vec<u8>> {

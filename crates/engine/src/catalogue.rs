@@ -678,7 +678,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Inlet & Outlet",
         Loads,
         "Flow",
-        "Velocity inlets, pressure outlets, walls, moving and slip walls, periodic faces; held temperatures, heat fluxes and adiabatic faces; conducting solids' temperature limits",
+        "Velocity inlets, pressure outlets, walls, moving and slip walls, symmetry planes, periodic faces; held temperatures, heat fluxes and adiabatic faces; conducting solids' temperature limits",
         &["model.fluid_domain.thermal_boundary", "model.fluid_domain.limit"],
     ),
     // ---- Interactions ----
@@ -767,7 +767,7 @@ pub static CATALOGUE: &[Capability] = &[
         "Read Deck",
         Solve,
         "Decks",
-        "Read an Abaqus input deck's model data: mesh, sets, materials and sections; unread keywords are listed, not kept",
+        "Read an Abaqus input deck's model data and the current writer's linear history: mesh, sets, materials, sections, static/frequency/buckling steps, boundary conditions and concentrated loads; unread keywords are listed, not kept",
     ),
     ready_more(
         "solve.static",
@@ -792,7 +792,7 @@ pub static CATALOGUE: &[Capability] = &[
         Solve,
         "Fluids",
         "Lattice Boltzmann flow of a fluid step on the CPU or a GPU, with wall forces, and the heat it carries",
-        &["solve.settings"],
+        &["solve.settings", "solve.outlet_reflection"],
     ),
     soon("solve.fsi", "Fluid–Structure", Solve, "Fluids", "M13", "Coupled fluid and structure solve"),
     // ---- Results ----

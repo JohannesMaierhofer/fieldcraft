@@ -20,8 +20,8 @@
 //!   wall-function bounce (`spalding_bounce`, [`crate::bounce`]) the outermost cell layer at a
 //!   wall face is the wall instead: those boundary nodes run their eq. 14 in place of the
 //!   collision and are not fluid cells.
-//! - **Interpolated walls** (`walls: "interpolated"`): each link into an obstacle bounces back
-//!   where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
+//! - **Interpolated walls** (`walls: "interpolated"` or `"interpolated_quadratic"`): each link
+//!   into an obstacle bounces back where the obstacle's surface crosses it, at the fraction `q` of the link from the fluid
 //!   cell ([`crate::voxel::link_fraction`]), by the linear interpolation of M. Bouzidi,
 //!   M. Firdaouss, P. Lallemand, *Momentum transfer of a Boltzmann-lattice fluid with
 //!   boundaries*, Phys. Fluids 13(11):3452, 2001. With `f*` the post-collision populations,
@@ -33,7 +33,11 @@
 //!   At `q = ½` both are halfway bounce-back. A link with `q < ½` whose `x_ff` is not a fluid
 //!   cell (another wall, a box face that is not periodic) has no second node to interpolate
 //!   from and keeps halfway bounce-back, as does a link no crossing was found on; both are
-//!   counted ([`WallLinks`]) and reported. The scheme is not mass conservative: the populations
+//!   counted ([`WallLinks`]) and reported. `"interpolated_quadratic"` reads the same characteristic
+//!   from three nodes in line ([`bouzidi_quadratic`]: Lagrange interpolation, the coefficients sum
+//!   to one and both lines are halfway bounce-back at `q = ½`) on links of walls at rest whose
+//!   nodes are fluid, and keeps the linear form on the others (counted in [`WallLinks`] and warned).
+//!   The scheme is not mass conservative: the populations
 //!   a wall sends back no longer sum to those it received. The box's walls lie halfway along
 //!   their links already and keep halfway bounce-back, as do thin walls and, with heat, the
 //!   temperature lattice.
@@ -44,6 +48,9 @@
 //!   corrected on the diagonal unknowns as M. Hecht and J. Harting do for D3Q19 (*Implementation
 //!   of on-site velocity boundary conditions for D3Q19 lattice Boltzmann simulations*, J. Stat.
 //!   Mech. 2010, P01018). The prescribed velocity is the one with the half force of Guo's scheme.
+//!   TRT velocity inlets then replace the non-equilibrium stress trace and high-frequency
+//!   density residual from two inner cells ([`crate::inlet`]), suppressing the alternating
+//!   boundary mode without changing the prescribed velocity or deviatoric stress.
 //!   Uniform pressure faces instead extrapolate the inner cell's normal velocity and
 //!   non-equilibrium populations (Guo, Zheng & Shi 2002, doi:10.1088/1009-1963/11/4/310),
 //!   imposing density and zero tangential velocity without discarding viscous stress. The
@@ -150,6 +157,7 @@ use crate::conduction::{Interface, Layout, SolidHeat};
 use crate::lattice::{C, Q, W, c, equilibrium, moving_wall, opposite};
 use crate::outlet::{Action, Outlets, Populations};
 use crate::rheology::{Clamp, Clamps, Rheology};
+use crate::sa::{SaField, SaInput, Side};
 use crate::setup::{MAX_LATTICE_SPEED, Obstacle, PhaseSetup, Setup, ZoneKind, ZoneSetup};
 use crate::surface::{Kind, Surface, SurfaceReport};
 use crate::voxel::{Grid, TriangleTree, voxelise};
@@ -203,6 +211,20 @@ pub fn bouzidi(frac: f64, out: f64, next_out: f64, same: f64, du: f64) -> f64 {
     if frac < 0.5 { 2.0 * frac * out + (1.0 - 2.0 * frac) * next_out + du } else { (out + (2.0 * frac - 1.0) * same + du) / (2.0 * frac) }
 }
 
+/// The quadratic form of [`bouzidi`]: the same characteristic read from three nodes in line
+/// (Lagrange interpolation; the coefficients sum to one and both lines are halfway bounce-back at
+/// `frac = ½`). For `frac < ½` the populations leaving toward the wall of the cell (`out`), of the
+/// next cell (`next_out`) and of the one after it (`next2_out`); otherwise `out`, the cell's `same`
+/// and the next cell's (`next_same`). Walls at rest: there is no moving-wall term.
+#[inline(always)]
+pub fn bouzidi_quadratic(frac: f64, out: f64, next_out: f64, next2_out: f64, same: f64, next_same: f64) -> f64 {
+    if frac < 0.5 {
+        frac * (1.0 + 2.0 * frac) * out + (1.0 - 4.0 * frac * frac) * next_out - frac * (1.0 - 2.0 * frac) * next2_out
+    } else {
+        out / (frac * (2.0 * frac + 1.0)) + (2.0 * frac - 1.0) / frac * same - (2.0 * frac - 1.0) / (2.0 * frac + 1.0) * next_same
+    }
+}
+
 /// An interpolated wall link's data ([`Rule::Interpolated`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Interpolation {
@@ -214,12 +236,26 @@ pub struct Interpolation {
     pub q: f64,
     /// Ladd's moving-wall term, as for [`Rule::Bounce`].
     pub du: f64,
+    /// Whether the link takes the quadratic form ([`bouzidi_quadratic`]): the walls ask for it, the
+    /// wall is at rest and the nodes it reads are fluid.
+    pub quadratic: bool,
+    /// The fluid cell two links further from the wall, read by the quadratic form when `q < ½`
+    /// (the link's own cell otherwise).
+    pub next2: u32,
 }
 
 /// [`bouzidi`] on the populations `f` (direction stride `s`) of cell `cell`, direction `q`.
 #[inline(always)]
 fn interpolated_value(f: &[f64], s: usize, cell: usize, q: usize, link: Interpolation) -> Option<f64> {
     let out = *f.get(opposite(q) * s + cell)?;
+    if link.quadratic {
+        let (next, next2) = (link.next as usize, link.next2 as usize);
+        return Some(if link.q < 0.5 {
+            bouzidi_quadratic(link.q, out, *f.get(opposite(q) * s + next)?, *f.get(opposite(q) * s + next2)?, 0.0, 0.0)
+        } else {
+            bouzidi_quadratic(link.q, out, 0.0, 0.0, *f.get(q * s + cell)?, *f.get(q * s + next)?)
+        });
+    }
     let next_out = if link.q < 0.5 { *f.get(opposite(q) * s + link.next as usize)? } else { 0.0 };
     let same = if link.q < 0.5 { 0.0 } else { *f.get(q * s + cell)? };
     Some(bouzidi(link.q, out, next_out, same, link.du))
@@ -235,12 +271,26 @@ pub struct WallLinks {
     pub no_second_node: u64,
     /// Links on which no crossing with the surface was found: halfway bounce-back.
     pub no_crossing: u64,
+    /// Of the interpolated links, those that take the quadratic form (`interpolated_quadratic`
+    /// walls).
+    pub quadratic: u64,
+    /// With `interpolated_quadratic` walls, the interpolated links that keep the linear form because
+    /// their wall moves (the quadratic form has no moving-wall term).
+    pub linear_moving_wall: u64,
+    /// With `interpolated_quadratic` walls, the interpolated links that keep the linear form because
+    /// the nodes in line it reads are not all fluid.
+    pub linear_too_few_nodes: u64,
 }
 
 impl WallLinks {
     /// The links that fell back to halfway bounce-back.
     pub fn halfway(&self) -> u64 {
         self.no_second_node + self.no_crossing
+    }
+
+    /// With `interpolated_quadratic` walls, the interpolated links that kept the linear form.
+    pub fn linear(&self) -> u64 {
+        self.linear_moving_wall + self.linear_too_few_nodes
     }
 }
 
@@ -368,6 +418,24 @@ fn neighbour(grid: &Grid, periodic: [bool; 3], fluid: &[bool], p: [usize; 3], ax
     *q.get_mut(axis)? = next;
     let cell = grid.index(q);
     fluid.get(cell).copied().unwrap_or(false).then_some(cell)
+}
+
+/// The cell next to the cell at `p` along `axis` (towards `+axis` with `up`), fluid or not, across
+/// a periodic face its periodic image; `None` outside a face that is not periodic.
+fn across(grid: &Grid, periodic: [bool; 3], p: [usize; 3], axis: usize, up: bool) -> Option<usize> {
+    let n = *grid.cells.get(axis)?;
+    let i = *p.get(axis)?;
+    let periodic = periodic.get(axis).copied().unwrap_or(false);
+    let next = match (up, i) {
+        (true, i) if i + 1 < n => i + 1,
+        (true, _) if periodic => 0,
+        (false, 0) if periodic => n.checked_sub(1)?,
+        (false, 0) | (true, _) => return None,
+        (false, i) => i - 1,
+    };
+    let mut q = p;
+    *q.get_mut(axis)? = next;
+    Some(grid.index(q))
 }
 
 /// A cell's action: its zone's, with the resistance of its liquid fraction `liquid` (with a phase
@@ -600,6 +668,8 @@ pub struct Flow {
     cell_nu_t: Vec<f64>,
     /// The largest eddy viscosity over the fluid's own of the last collision (0 without one).
     eddy_ratio: f64,
+    /// The Spalart–Allmaras model: ν̃, each cell's wall distance and vorticity.
+    sa: Option<SaState>,
     /// With Van Driest's damping or the wall model: the wall cells (and with damping every
     /// cell's wall distance and the friction velocities).
     walls: Option<Walls>,
@@ -669,11 +739,32 @@ pub struct Flow {
     pub(crate) block: usize,
     /// Each open cell's populations after its boundary, in the step (kept for its capacity).
     open_scratch: Vec<[f64; Q]>,
+    inlets: crate::inlet::Inlets,
+    /// The characteristic outlet ([`Flow::characteristic_outlet`]): its cells in open-cell order
+    /// (empty without one), its relaxation rate K, and how many cell updates kept their last state
+    /// because the balance was not finite and positive.
+    characteristic: Vec<crate::outlet::Characteristic>,
+    characteristic_rate: f64,
+    characteristic_held: u64,
     /// The free surface: which fluid cells hold liquid, with a free surface.
     pub(crate) surface: Option<Surface>,
 }
 
 const NONE: u32 = u32::MAX;
+
+/// The Spalart–Allmaras model's state in the flow ([`crate::sa`]): ν̃ on the cells that collide,
+/// each cell's distance to the nearest no-slip wall ([`crate::distance`]) and the vorticity of the
+/// step's velocities (rebuilt each step before ν̃ advances).
+#[derive(Debug, Clone)]
+struct SaState {
+    field: SaField,
+    distance: crate::distance::WallDistance,
+    vorticity: Vec<f64>,
+    /// A fixed sub-step count ([`Flow::set_sa_substeps`]); none: as many as the bound needs.
+    substeps: Option<u32>,
+    /// Whether the model's sources act ([`Flow::set_sa_model`]; off: ν̃'s transport alone).
+    model: bool,
+}
 
 /// Cells per parallel block of the collision and the streaming: about a 256th of the grid, so a
 /// machine with many threads still has several blocks per thread (4096-cell blocks left 45 for
@@ -765,7 +856,8 @@ impl Flow {
             trees.push((TriangleTree::new(&o.surface), o.surface.tri_face(), &o.exact[..]));
             base.push(groups.len() as u32);
             groups.extend(faces.names.iter().map(|name| Group { name: name.clone(), body: Some(o.body.clone()) }));
-            obstacle_walls.extend((0..faces.names.len()).map(|t| Some(setup.to_lattice(faces.velocities.get(t).copied().unwrap_or([0.0; 3])))));
+            // `faces.velocities` are in lattice units already (Setup scales them).
+            obstacle_walls.extend((0..faces.names.len()).map(|t| Some(faces.velocities.get(t).copied().unwrap_or([0.0; 3]))));
         }
 
         // Conducting cells: per grid cell its index among them (empty without conducting solids),
@@ -807,7 +899,9 @@ impl Flow {
             FaceCondition::Wall {} => Some([0.0; 3]),
             _ => None,
         };
-        let is_slip = |face: BoxFace| matches!(domain.faces.get(face), FaceCondition::Slip {});
+        // A symmetry plane is a slip face to the flow (and adiabatic: the model holds it so).
+        let is_slip = |face: BoxFace| domain.faces.get(face).is_slip();
+        let is_symmetry = |face: BoxFace| domain.faces.get(face).is_symmetry();
         // The wall-function bounce reflects at its walls instead of bouncing back; only at rest.
         let wall_bounce = setup.wall_model == Some(WallModel::SpaldingBounceHalfway);
         if wall_bounce && let Some(face) = BoxFace::ALL.iter().find(|f| matches!(domain.faces.get(**f), FaceCondition::MovingWall { .. })) {
@@ -903,16 +997,36 @@ impl Flow {
         };
         // With interpolated walls, an obstacle link's bounce-back where the surface crosses it
         // (Bouzidi et al.), or halfway when it has no crossing or no second fluid cell.
-        let interpolate = setup.walls == WallTreatment::Interpolated;
+        let interpolate = setup.walls.is_interpolated();
+        let quadratic_walls = setup.walls == WallTreatment::InterpolatedQuadratic;
         let mut wall_links = interpolate.then(WallLinks::default);
         let mut interpolations: Vec<Interpolation> = Vec::new();
         let interpolated = |cell: usize, solid: u32, q: usize, rule: Rule, counts: &mut WallLinks, slots: &mut Vec<Interpolation>| -> Rule {
             let Rule::Bounce { group, du } = rule else { return rule };
             let k = owner.get(solid as usize).copied().unwrap_or(NONE) as usize;
             let Some((tree, tags, exact)) = trees.get(k) else { return rule };
-            let (centre, cq) = (grid.centre(cell), c(q));
-            // The solid centre where the link really ends (unwrapped across a periodic face).
-            let end = [0, 1, 2].map(|a| centre[a] - cq[a] * grid.spacing);
+            let (mut centre, cq) = (grid.centre(cell), c(q));
+            // The solid end is the centre the voxeliser classified for that cell, so the link meets
+            // the surface exactly where the voxeliser put it (a centre computed here by stepping
+            // from the fluid centre can differ by an ulp and land on the wrong side of the surface).
+            let end = grid.centre(solid as usize);
+            // The unwrapped solid end (one cell beyond the fluid centre) tells whether the link
+            // crosses a periodic face: it then lies half a cell outside the box, so rounding cannot
+            // change the decision. The fluid end moves by a box length to the solid cell's side.
+            for a in 0..3 {
+                let length = grid.cells[a] as f64 * grid.spacing;
+                let unwrapped = centre[a] - cq[a] * grid.spacing;
+                let shift = if unwrapped < grid.origin[a] {
+                    length
+                } else if unwrapped > grid.origin[a] + length {
+                    -length
+                } else {
+                    0.0
+                };
+                if periodic[a] && shift != 0.0 {
+                    centre[a] += shift;
+                }
+            }
             let Some(frac) = crate::voxel::link_fraction(tree, tags, exact, centre, end) else {
                 counts.no_crossing += 1;
                 return rule;
@@ -923,9 +1037,23 @@ impl Flow {
                 counts.no_second_node += 1;
                 return rule;
             }
+            // The quadratic form reads one node more in line, on walls at rest.
+            let next2 =
+                next.and_then(|n| crate::surface::neighbour(&grid, periodic, grid.coords(n), q)).filter(|n| fluid.get(*n).copied().unwrap_or(false));
+            let nodes = next.is_some() && (frac >= 0.5 || next2.is_some());
+            let quadratic = quadratic_walls && du == 0.0 && nodes;
             counts.interpolated += 1;
+            if quadratic_walls {
+                if quadratic {
+                    counts.quadratic += 1;
+                } else if du != 0.0 {
+                    counts.linear_moving_wall += 1;
+                } else {
+                    counts.linear_too_few_nodes += 1;
+                }
+            }
             let slot = slots.len() as u32;
-            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du });
+            slots.push(Interpolation { next: next.unwrap_or(cell) as u32, q: frac, du, quadratic, next2: next2.unwrap_or(cell) as u32 });
             Rule::Interpolated { group, slot }
         };
 
@@ -988,7 +1116,10 @@ impl Flow {
                     }
                     Some(_) => {
                         // The specular reflection at `face`: from the same cell layer, the
-                        // tangential components shifted; bounce-back at an edge or corner.
+                        // tangential components shifted; bounce-back at an edge or corner. A
+                        // symmetry plane mirrors the obstacles too: a population reflected from
+                        // an obstacle cell bounces back off the obstacle's mirror image, its
+                        // momentum the obstacle's.
                         let reflect = |face: BoxFace| {
                             let a = face.axis();
                             let mut m = s;
@@ -1001,6 +1132,9 @@ impl Flow {
                             match inside.then(|| index(m)) {
                                 Some(from) if single && fluid.get(from as usize).copied().unwrap_or(false) => {
                                     Rule::Reflect { from, q: q2 as u8, group: face.index() as u32 }
+                                }
+                                Some(from) if single && is_symmetry(face) && owner.get(from as usize).is_some_and(|k| *k != NONE) => {
+                                    obstacle_link(cell, from, q)
                                 }
                                 _ => Rule::Bounce { group: face.index() as u32, du: 0.0 },
                             }
@@ -1056,13 +1190,25 @@ impl Flow {
                             if profile == Profile::Parabolic {
                                 for t in [t1, t2].into_iter().filter(|t| !periodic[*t]) {
                                     let s = (ijk[t] as f64 + 0.5) / grid.cells[t] as f64;
+                                    // A symmetry plane at one end is the middle of the whole
+                                    // model's profile (the half of a channel); at both, the
+                                    // direction is unbounded, as a periodic one.
+                                    let s = match (is_symmetry(BoxFace::of(t, false)), is_symmetry(BoxFace::of(t, true))) {
+                                        (false, false) => s,
+                                        (false, true) => s / 2.0,
+                                        (true, false) => 0.5 + s / 2.0,
+                                        (true, true) => 0.5,
+                                    };
                                     scale *= 4.0 * s * (1.0 - s);
                                 }
                             }
                             Target::Velocity(setup.to_lattice(velocity).map(|v| v * scale))
                         }
-                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform } => Target::Density(setup.lattice_density(pressure)),
-                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective } => Target::Convective(setup.lattice_density(pressure)),
+                        // A characteristic outlet starts as a uniform one ([`Flow::characteristic_outlet`]).
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Uniform | Outflow::Characteristic, .. } => {
+                            Target::Density(setup.lattice_density(pressure))
+                        }
+                        FaceCondition::Pressure { pressure, outflow: Outflow::Convective, .. } => Target::Convective(setup.lattice_density(pressure)),
                         _ => break,
                     };
                     if let Some(t) = taken.get_mut(cell) {
@@ -1190,8 +1336,17 @@ impl Flow {
                         let wall = wall_velocity(face).is_some() || is_slip(face);
                         wall.then(|| ts.faces.get(face.index()).copied().unwrap_or_default())
                     });
-                    let layout =
-                        Layout { grid: &grid, periodic, conducting: &conducting, walls, kf: ts.conductivity, contacts: &ts.contacts, zero: ts.zero };
+                    let mirrors = BoxFace::ALL.map(is_symmetry);
+                    let layout = Layout {
+                        grid: &grid,
+                        periodic,
+                        conducting: &conducting,
+                        walls,
+                        mirrors,
+                        kf: ts.conductivity,
+                        contacts: &ts.contacts,
+                        zero: ts.zero,
+                    };
                     Some(SolidHeat::build(
                         &layout,
                         solids,
@@ -1263,6 +1418,42 @@ impl Flow {
         } else {
             None
         };
+        let sa = match setup.spalart_allmaras {
+            None => None,
+            Some(sa) => {
+                // Setup::new refuses the model with the on-node wall, so the cells that collide are
+                // the fluid ones and a face to a solid cell is a halfway wall.
+                let face_side = |face: BoxFace| match domain.faces.get(face) {
+                    FaceCondition::Wall {} | FaceCondition::MovingWall { .. } => Side::Wall,
+                    FaceCondition::Velocity { .. } => Side::Inflow,
+                    FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Pressure { .. } | FaceCondition::Periodic {} => Side::Open,
+                };
+                let mut sides = filled(n, [Side::Open; 6], "Spalart–Allmaras faces")?;
+                for (cell, out) in sides.iter_mut().enumerate() {
+                    if !fluid.get(cell).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let p = grid.coords(cell);
+                    for (k, side) in out.iter_mut().enumerate() {
+                        let (axis, up) = (k / 2, k % 2 == 1);
+                        *side = match neighbour(&grid, periodic, &fluid, p, axis, up) {
+                            Some(nb) => Side::Cell(nb as u32),
+                            // A solid cell across, or the box face.
+                            None => match across(&grid, periodic, p, axis, up) {
+                                Some(_) => Side::Wall,
+                                None => face_side(BoxFace::of(axis, up)),
+                            },
+                        };
+                    }
+                }
+                let no_slip: Vec<bool> = group_walls.iter().map(Option::is_some).collect();
+                let surface = crate::distance::WallSurface::from_links(&grid, &links, &no_slip)?;
+                let distance = crate::distance::WallDistance::new(&grid, &fluid, &surface, periodic, &setup.limits)?;
+                let inflow = sa.inflow_ratio * nu;
+                let field = SaField::new(sides, fluid.clone(), inflow, inflow)?;
+                Some(SaState { field, distance, vorticity: filled(n, 0.0, "vorticities")?, substeps: None, model: true })
+            }
+        };
         open.shrink_to_fit();
         let mut flow = Flow {
             grid,
@@ -1281,12 +1472,13 @@ impl Flow {
             vreman: setup.vreman,
             cell_nu_t: if setup.turbulent() && setup.thermal.is_some() { filled(n, 0.0, "eddy viscosities")? } else { Vec::new() },
             eddy_ratio: 0.0,
+            sa,
             walls,
             wall_model: setup.wall_model == Some(WallModel::Musker),
             wall_bounce: setup.wall_model == Some(WallModel::SpaldingBounceHalfway),
             nodes: on_node.then(|| WallNodes::new(node_list, nu)),
             bulk,
-            rheology: setup.rheology,
+            rheology: setup.rheology.clone(),
             clamps: Clamps::default(),
             acceleration: setup.acceleration,
             forces: vec![[0.0; 3]; groups.len()],
@@ -1305,7 +1497,11 @@ impl Flow {
             sigma: setup.sigma,
             dynamic: setup.dynamic_sigma,
             sigma_stats: None,
-            gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 { filled(n, [0.0; 3], "cell velocities")? } else { Vec::new() },
+            gradient_u: if setup.collision == Collision::Hrr || setup.vreman > 0.0 || setup.spalart_allmaras.is_some() {
+                filled(n, [0.0; 3], "cell velocities")?
+            } else {
+                Vec::new()
+            },
             periodic,
             fan_rise: vec![0.0; setup.zones.len()],
             zones: setup.zones.clone(),
@@ -1315,9 +1511,20 @@ impl Flow {
             outlets: Outlets::default(),
             block: block_cells(n),
             open_scratch: Vec::new(),
+            inlets: crate::inlet::Inlets::default(),
+            characteristic: Vec::new(),
+            characteristic_rate: 0.0,
+            characteristic_held: 0,
             surface,
         };
         flow.outlets = Outlets::new(&flow.open, &View { flow: &flow, f: &flow.f });
+        // A moving liquid/gas interface does not provide two fixed inner fluid samples.
+        if setup.collision == Collision::Trt && flow.surface.is_none() && flow.open.iter().any(|oc| matches!(oc.target, Target::Velocity(_))) {
+            flow.inlets = crate::inlet::Inlets::new(&grid, &flow.open, periodic, &flow.fluid)?;
+        }
+        if let Some((face, sigma)) = setup.domain.characteristic_outlet() {
+            flow.characteristic_outlet(face, sigma)?;
+        }
         if let Some(s) = &mut flow.surface {
             s.initial_mass = s.total_mass(&flow.f, flow.stride);
         }
@@ -1327,6 +1534,11 @@ impl Flow {
     /// What the convective outlet cells keep between steps.
     pub fn outlets(&self) -> &Outlets {
         &self.outlets
+    }
+
+    /// Geometry-derived reconstruction stencils for TRT velocity inlets, shared with the GPU.
+    pub fn inlet_stencils(&self) -> &[crate::inlet::Stencil] {
+        self.inlets.stencils()
     }
 
     /// The free surface, when the flow has one.
@@ -1531,13 +1743,16 @@ impl Flow {
             + bytes(&self.cell_u)
             + bytes(&self.cell_nu_t)
             + bytes(&self.gradient_u)
+            + self.sa.as_ref().map_or(0, |s| s.field.heap_bytes() + bytes(&s.vorticity) + size_of_val(s.distance.as_slice()) as u64)
             + bytes(&self.zone_of)
             + bytes(&self.open_scratch)
+            + bytes(&self.characteristic)
             + bytes(&self.baffles)
             + bytes(&self.interpolations)
             + bytes(&self.wall_velocity)
             + self.zone_cells.iter().map(bytes).sum::<u64>()
-            + self.outlets.heap_bytes();
+            + self.outlets.heap_bytes()
+            + self.inlets.heap_bytes();
         if let Some(t) = &self.thermal {
             total += bytes(&t.g) + bytes(&t.g2) + bytes(&t.temperature) + bytes(&t.open) + bytes(&t.reset);
             total += t.phase.as_ref().map_or(0, |p| bytes(&p.liquid));
@@ -1670,7 +1885,17 @@ impl Flow {
 
     /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
     pub fn turbulent(&self) -> bool {
-        self.smagorinsky > 0.0 || self.vreman > 0.0
+        self.smagorinsky > 0.0 || self.vreman > 0.0 || self.sa.is_some()
+    }
+
+    /// The Spalart–Allmaras field, with that model.
+    pub fn spalart_allmaras(&self) -> Option<&SaField> {
+        self.sa.as_ref().map(|s| &s.field)
+    }
+
+    /// With the Spalart–Allmaras model, each cell's wall distance it reads (lattice units).
+    pub fn sa_wall_distance(&self) -> Option<&[f64]> {
+        self.sa.as_ref().map(|s| s.distance.as_slice())
     }
 
     /// With the hybrid collision's dynamic σ, its smallest and mean value over the fluid cells in
@@ -1710,6 +1935,35 @@ impl Flow {
     /// turbulence model).
     pub fn eddy_viscosity_ratio(&self) -> f64 {
         self.eddy_ratio
+    }
+
+    /// With the Spalart–Allmaras model: take exactly `n` equal sub-steps of ν̃ per lattice step
+    /// ([`SaInput::substeps`]), the reference a device backend with a fixed count is checked
+    /// against; `None` (the default) takes as many as the monotone bound needs.
+    #[doc(hidden)]
+    pub fn set_sa_substeps(&mut self, n: Option<u32>) {
+        if let Some(sa) = &mut self.sa {
+            sa.substeps = n;
+        }
+    }
+
+    /// With the Spalart–Allmaras model: whether its production and destruction act (on by
+    /// default); off, ν̃ is only transported, for verification ([`SaInput::model`]).
+    #[doc(hidden)]
+    pub fn set_sa_model(&mut self, on: bool) {
+        if let Some(sa) = &mut self.sa {
+            sa.model = on;
+        }
+    }
+
+    /// With the Spalart–Allmaras model: set ν̃ in every cell (lattice units; one finite value per
+    /// cell, 0 kept outside the fluid), for verification and restarts from another field.
+    #[doc(hidden)]
+    pub fn set_sa_nu_tilde(&mut self, values: &[f64]) -> Result<()> {
+        match &mut self.sa {
+            Some(sa) => sa.field.set_nu_tilde(values),
+            None => Err(Error::Invalid("the flow has no Spalart–Allmaras model".into())),
+        }
     }
 
     /// The body acceleration in lattice units.
@@ -1800,6 +2054,7 @@ impl Flow {
         self.sample_stress();
         self.sample_nodes();
         self.gradient_velocities();
+        self.advance_sa()?;
         let max_u2 = self.collide();
         self.collide_nodes();
         if !(max_u2 <= MAX_LATTICE_SPEED * MAX_LATTICE_SPEED) {
@@ -2104,6 +2359,130 @@ impl Flow {
         self.walls = Some(walls);
     }
 
+    /// A characteristic (partially non-reflecting) pressure outlet on `face`, opt-in, before the
+    /// first step, on a uniform pressure outlet. Instead of holding the reference density ρ₀ with
+    /// the inner cell's normal velocity, each outlet cell carries its own density ρ_b and outward
+    /// normal velocity u_b, advanced by the linearised characteristic (LODI) balance of T. J.
+    /// Poinsot, S. K. Lele, *Boundary conditions for direct simulations of compressible viscous
+    /// flows*, J. Comput. Phys. 101:104–129, 1992, in density units (p = c_s² ρ): the outgoing
+    /// wave `L₅ = (u_b + c_s)[(ρ_b − ρ₁) + (ρ₀/c_s)(u_b − u₁)]`, one-sided from the inner cell, and
+    /// the incoming wave only the relaxation of the pressure, `L₁ = K (ρ_b − ρ₀)`, K = σ c_s / L
+    /// (L the box's extent along the face's axis, in cells; their σ, without their 1 − M² factor):
+    /// `ρ_b ← ρ_b − ½ (L₅ + L₁)`, `u_b ← u_b − (c_s / 2ρ₀)(L₅ − L₁)`. The cell then takes the
+    /// equilibrium at ρ_b and u_b (no tangential velocity, as the uniform outlet) plus the inner
+    /// cell's non-equilibrium part (Guo, Zheng & Shi). Returns the outlet's cell count.
+    pub fn characteristic_outlet(&mut self, face: BoxFace, sigma: f64) -> Result<usize> {
+        if self.steps_done > 0 {
+            return Err(Error::Invalid("the characteristic outlet is set before the first step".into()));
+        }
+        if !self.characteristic.is_empty() {
+            return Err(Error::Invalid(format!(
+                "not supported yet: a characteristic outlet on more than one face (`{}` would be the second)",
+                face.name()
+            )));
+        }
+        if !(sigma > 0.0 && sigma <= 1.0) {
+            return Err(Error::Invalid(format!("the characteristic outlet's σ is {sigma}: give one above 0 and at most 1")));
+        }
+        let axis = face.axis();
+        let on = |oc: &OpenCell| oc.axis == axis && (oc.inward < 0.0) == face.is_max();
+        let mut cells = Vec::with_capacity(self.open.iter().filter(|oc| on(oc)).count());
+        for (k, oc) in self.open.iter().enumerate() {
+            if !on(oc) {
+                continue;
+            }
+            let Target::Density(rho0) = oc.target else {
+                return Err(Error::Invalid(format!(
+                    "the characteristic outlet replaces a uniform pressure outlet; `{}` is not one (a convective outlet keeps its own closure)",
+                    face.name()
+                )));
+            };
+            let open = u32::try_from(k).map_err(|_| Error::Limit("too many open cells".into()))?;
+            cells.push(crate::outlet::Characteristic { open, density: rho0, velocity: f64::NAN });
+        }
+        if cells.is_empty() {
+            return Err(Error::Invalid(format!("the characteristic outlet goes on a pressure outlet; `{}` has none", face.name())));
+        }
+        let extent = self.grid.cells.get(axis).copied().unwrap_or(1).max(1);
+        self.characteristic_rate = sigma * crate::lattice::CS2.sqrt() / extent as f64;
+        self.characteristic = cells;
+        Ok(self.characteristic.len())
+    }
+
+    /// Advance the characteristic outlet's boundary state ([`Flow::characteristic_outlet`]) by
+    /// one step from the streamed inner cells, before any open cell is written.
+    fn advance_characteristic(&mut self) {
+        let mut cells = std::mem::take(&mut self.characteristic);
+        let mut held = 0;
+        for cell in &mut cells {
+            let Some(oc) = self.open.get(cell.open as usize) else { continue };
+            let Target::Density(rho0) = oc.target else { continue };
+            // Without a fluid cell inside (an obstacle in the inner layer), the cell takes the
+            // local closure at ρ₀ and does not absorb: counted, as a held update.
+            let Some((_, fi, inner_half)) = self.inner_cell(oc) else {
+                held += 1;
+                continue;
+            };
+            let (mut rho1, mut j) = (0.0, 0.0);
+            for (q, f) in fi.iter().enumerate() {
+                rho1 += f;
+                j += f * c(q).get(oc.axis).copied().unwrap_or(0.0);
+            }
+            // The inner cell's outward physical velocity, as the closure reads it.
+            let u1 = -oc.inward * (j / rho1 + inner_half.get(oc.axis).copied().unwrap_or(0.0));
+            if !cell.advance(rho1, u1, rho0, self.characteristic_rate) {
+                held += 1;
+            }
+        }
+        self.characteristic = cells;
+        self.characteristic_held += held;
+    }
+
+    /// The streamed inner cell of pressure-outlet cell `oc` (one layer inside, when fluid): its
+    /// index, populations and half force per mass, with a fan's, a porous zone's or a mushy
+    /// cell's action as the collision applies it. Both pressure closures read it.
+    fn inner_cell(&self, oc: &OpenCell) -> Option<(usize, [f64; Q], [f64; 3])> {
+        let s = self.stride;
+        let [nx, ny, _] = self.grid.cells;
+        let step = [1, nx, nx * ny].get(oc.axis).copied().unwrap_or(0);
+        let cell = oc.cell as usize;
+        let inside = if oc.inward > 0.0 { cell.checked_add(step) } else { cell.checked_sub(step) };
+        let inner = inside.filter(|&i| self.is_fluid(i))?;
+        let fi = std::array::from_fn(|q| self.g.get(q * s + inner).copied().unwrap_or(0.0));
+        let mut inner_half = self.force_at(inner).map(|v| 0.5 * v);
+        let action = cell_action(self.action_at(inner), self.liquid_fraction(inner));
+        if action.is_some() {
+            let inner_rho: f64 = fi.iter().sum();
+            let mut j = [0.0; 3];
+            for (q, f) in fi.iter().enumerate() {
+                for (ja, ca) in j.iter_mut().zip(c(q)) {
+                    *ja += f * ca;
+                }
+            }
+            let (_, force) = velocity_force(inner_rho, j, self.force_at(inner), action.as_ref());
+            inner_half = force.map(|f| 0.5 * f / inner_rho);
+        }
+        Some((inner, fi, inner_half))
+    }
+
+    /// How many cell updates of the characteristic outlet did not advance its state (0 without
+    /// one): where its balance was not finite and positive, or where the cell has no fluid cell
+    /// inside it (an obstacle in the outlet's inner layer). The outlet does not absorb there.
+    pub fn characteristic_held(&self) -> u64 {
+        self.characteristic_held
+    }
+
+    /// The characteristic outlet's state of open cell `k`, once it has one.
+    fn characteristic_at(&self, k: usize) -> Option<crate::outlet::Characteristic> {
+        let i = self.characteristic.binary_search_by_key(&k, |c| c.open as usize).ok()?;
+        self.characteristic.get(i).copied().filter(|c| c.density.is_finite() && c.velocity.is_finite())
+    }
+
+    /// The characteristic outlet's cell count (0 without one).
+    pub fn characteristic_outlet_cells(&self) -> usize {
+        self.characteristic.len()
+    }
+
     /// With the wall-function bounce: each wall cell's stress from its own density and velocity
     /// before the collision.
     fn sample_stress(&mut self) {
@@ -2251,6 +2630,35 @@ impl Flow {
         });
     }
 
+    /// With the Spalart–Allmaras model: each cell's vorticity from the finite-difference gradient
+    /// of the velocities [`Flow::gradient_velocities`] gathered (as the hybrid collision's and
+    /// Vreman's), then one lattice step of ν̃ ([`SaField::advance`]), before the collision reads
+    /// its ν_t.
+    fn advance_sa(&mut self) -> Result<()> {
+        let Some(sa) = &mut self.sa else { return Ok(()) };
+        let (grid, periodic, block, steps) = (self.grid, self.periodic, self.block, self.steps_done);
+        let fluid = populated_mask(&self.fluid, &self.bulk, self.surface.as_ref());
+        let u = &self.gradient_u;
+        parallel::chunks_mut(&mut sa.vorticity, block, |b, out| {
+            for (i, w) in out.iter_mut().enumerate() {
+                let cell = b * block + i;
+                *w = 0.0;
+                let (true, Some(&uc)) = (fluid.get(cell).copied().unwrap_or(false), u.get(cell)) else { continue };
+                let p = grid.coords(cell);
+                let nb: crate::hrr::Neighbours =
+                    [0, 1, 2].map(|axis| [false, true].map(|up| neighbour(&grid, periodic, fluid, p, axis, up).and_then(|c| u.get(c).copied())));
+                *w = crate::sa::vorticity(&crate::hrr::gradient(uc, &nb));
+            }
+        });
+        let nu = (1.0 / self.omega_plus - 0.5) / 3.0;
+        let input = SaInput { u, vorticity: &sa.vorticity, length: sa.distance.as_slice(), nu, model: sa.model, source: None, substeps: sa.substeps };
+        sa.field.advance(&input).map_err(|e| match e {
+            Error::Unstable(m) => Error::Unstable(format!("{m} (at time step {})", steps + 1)),
+            other => other,
+        })?;
+        Ok(())
+    }
+
     /// The collision with Guo forcing (two relaxation times, or recursive regularised), in place,
     /// by blocks of [`block_cells`] cells in parallel. Returns the largest squared lattice speed, or
     /// NaN when a density is not positive.
@@ -2260,7 +2668,7 @@ impl Flow {
         let hybrid = self.collision == Collision::Hrr;
         // The neighbours' velocities of the pass before the collision, for the finite-difference
         // gradient (the hybrid collision, Vreman's model).
-        let gradients = !self.gradient_u.is_empty();
+        let gradients = !self.gradient_u.is_empty() && (hybrid || self.vreman > 0.0);
         let regularized = self.collision.is_regularized();
         let mrt = self.collision == Collision::Mrt;
         let (sigma, gradient_u, grid, periodic) = (self.sigma, &self.gradient_u, self.grid, self.periodic);
@@ -2269,6 +2677,7 @@ impl Flow {
         let (wp, wm) = (self.omega_plus, self.omega_minus);
         let (sp, sm) = (1.0 - 0.5 * wp, 1.0 - 0.5 * wm);
         let (smagorinsky, vreman) = (self.smagorinsky, self.vreman);
+        let sa = self.sa.as_ref().map(|s| &s.field);
         let turbulent = self.turbulent();
         // Dynamic σ (set only with the hybrid collision), and the fluid's own viscosity (lattice
         // units) it compares the eddy viscosity with.
@@ -2384,14 +2793,17 @@ impl Flow {
                     (crate::hrr::gradient(u, &nb), nb)
                 });
                 let grad = local.as_ref().map(|(g, _)| g);
-                // Vreman's explicit eddy viscosity (not at a wall cell under the wall model, which
-                // keeps its own rate), and the rate it gives, τ̄ = 3 (ν + ν_t) + ½; none where
-                // ν_t = 0, so the cell keeps the fluid's own rates bit for bit.
-                let nu_vreman = match &grad {
-                    Some(g) if vreman > 0.0 && wall_rate.is_none() => crate::vreman::eddy_viscosity(g, vreman),
+                // Vreman's or the Spalart–Allmaras explicit eddy viscosity (not at a wall cell under
+                // the wall model, which keeps its own rate: it replaces the model's, never adds),
+                // and the rate it gives, τ̄ = 3 (ν + ν_t) + ½; none where ν_t = 0, so the cell
+                // keeps the fluid's own rates bit for bit.
+                let nu_explicit = match (&grad, sa) {
+                    _ if wall_rate.is_some() => 0.0,
+                    (Some(g), _) if vreman > 0.0 => crate::vreman::eddy_viscosity(g, vreman),
+                    (_, Some(field)) => field.nu_t(b * block + i, nu0),
                     _ => 0.0,
                 };
-                let explicit = (nu_vreman > 0.0).then(|| 1.0 / (1.0 / wp + 3.0 * nu_vreman));
+                let explicit = (nu_explicit > 0.0).then(|| 1.0 / (1.0 / wp + 3.0 * nu_explicit));
                 // Smagorinsky's implicit rate of the cell's own flux (Hou et al.).
                 let flux = || crate::turbulence::flux(&fq, rho, u, force, forced);
                 let implicit = || crate::turbulence::omega(&flux(), rho, wp, cell_c);
@@ -2429,7 +2841,7 @@ impl Flow {
                                         let p = crate::turbulence::flux(&fq, rho, u, force, forced);
                                         crate::turbulence::eddy_viscosity(&p, rho, wp, cell_c, crate::turbulence::flux_round_off(rho))
                                     } else {
-                                        nu_vreman
+                                        nu_explicit
                                     };
                                     nu_model = Some(nu_t);
                                     crate::hrr::dynamic_sigma(g, &crate::hrr::laplacian(u, nb), nu_t, nu0, l_max)
@@ -2661,19 +3073,25 @@ impl Flow {
     }
 
     /// Zou–He velocity, extrapolated pressure and convective boundaries. Every inner-cell read
-    /// uses the streamed populations before any open cell is changed, so cells are worked out
-    /// in parallel (blocks of [`OPEN_BLOCK`]) and
+    /// uses the streamed populations before any open cell is changed, TRT inlet residuals
+    /// included, so cells are worked out in parallel (blocks of [`OPEN_BLOCK`]) and
     /// stored afterwards in cell order: done one after another they were a tenth of a step on
     /// one thread, which capped the speed-up of many (#643).
     fn open_boundaries(&mut self) {
         let s = self.stride;
         let regularized = self.collision.is_regularized();
+        let mrt = self.collision == Collision::Mrt;
         let mut outlets = std::mem::take(&mut self.outlets);
         let [nx, ny, _] = self.grid.cells;
         outlets.convect(&self.open, &View { flow: self, f: &self.g }, [1, nx, nx * ny]);
+        let mut inlets = std::mem::take(&mut self.inlets);
+        inlets.stage(&self.open, &View { flow: self, f: &self.g });
         let mut done = std::mem::take(&mut self.open_scratch);
         done.clear();
         done.resize(self.open.len(), [0.0; Q]);
+        // The characteristic outlet's boundary state this step, from the streamed inner cells
+        // before any open cell is written.
+        self.advance_characteristic();
         {
             let (flow, outlets) = (&*self, &outlets);
             parallel::chunks_mut(&mut done, OPEN_BLOCK, |b, chunk| {
@@ -2688,27 +3106,15 @@ impl Flow {
                     let (axis, sign) = (oc.axis, oc.inward);
                     // Guo, Zheng & Shi's non-equilibrium extrapolation. Read the streamed
                     // inner cell before any open boundary is written, including at edges.
-                    if let Target::Density(rho) = oc.target {
-                        let step = [1, nx, nx * ny].get(axis).copied().unwrap_or(0);
-                        let inside = if sign > 0.0 { cell.checked_add(step) } else { cell.checked_sub(step) };
-                        if let Some(inner) = inside.filter(|&i| flow.is_fluid(i)) {
-                            let fi = std::array::from_fn(|q| flow.g.get(q * s + inner).copied().unwrap_or(0.0));
-                            let mut inner_half = flow.force_at(inner).map(|v| 0.5 * v);
-                            let action = cell_action(flow.action_at(inner), flow.liquid_fraction(inner));
-                            if action.is_some() {
-                                let inner_rho: f64 = fi.iter().sum();
-                                let mut j = [0.0; 3];
-                                for (q, f) in fi.iter().enumerate() {
-                                    for (ja, ca) in j.iter_mut().zip(c(q)) {
-                                        *ja += f * ca;
-                                    }
-                                }
-                                let (_, force) = velocity_force(inner_rho, j, flow.force_at(inner), action.as_ref());
-                                inner_half = force.map(|f| 0.5 * f / inner_rho);
-                            }
-                            *p = crate::outlet::extrapolate_pressure(fi, rho, axis, inner_half, a_half);
-                            continue;
-                        }
+                    if let Target::Density(rho) = oc.target
+                        && let Some((_, fi, inner_half)) = flow.inner_cell(oc)
+                    {
+                        let (density, normal) = match flow.characteristic_at(k) {
+                            Some(b) => (b.density, crate::outlet::Normal::Given(-sign * b.velocity)),
+                            None => (rho, crate::outlet::Normal::Extrapolated(inner_half)),
+                        };
+                        *p = crate::outlet::pressure_closure(fi, density, axis, normal, a_half);
+                        continue;
                     }
                     // The cell's populations alone: direction stride 1, cell 0.
                     match (oc.target, outlets.action(k)) {
@@ -2722,8 +3128,13 @@ impl Flow {
                                 *x += w * shift;
                             }
                         }
-                        (Target::Convective(rho), Action::Hold) => zou_he(p, 1, 0, axis, sign, a_half, crate::outlet::backflow(rho), regularized),
-                        (target, _) => zou_he(p, 1, 0, axis, sign, a_half, target, regularized),
+                        (Target::Convective(rho), Action::Hold) => {
+                            zou_he(p, 1, 0, axis, sign, a_half, crate::outlet::backflow(rho), regularized, false)
+                        }
+                        (target, _) => zou_he(p, 1, 0, axis, sign, a_half, target, regularized, mrt),
+                    }
+                    if let Target::Velocity(u) = oc.target {
+                        inlets.apply(k, p, std::array::from_fn(|a| u[a] - a_half[a]));
                     }
                 }
             });
@@ -2746,6 +3157,7 @@ impl Flow {
         }
         self.open_scratch = done;
         self.outlets = outlets;
+        self.inlets = inlets;
         if let Some(surface) = &mut self.surface {
             surface.injected += injected;
         }
@@ -2783,7 +3195,7 @@ impl Populations for View<'_> {
 /// density and that normal velocity: the fallback when a pressure cell has no inner fluid cell,
 /// and a convective outlet's cell where the flow comes back in ([`crate::outlet::backflow`]).
 #[allow(clippy::too_many_arguments)]
-fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: [f64; 3], target: Target, regularized: bool) {
+fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: [f64; 3], target: Target, regularized: bool, project: bool) {
     let ci = |q: usize| f64::from(C[q][axis]);
     let at = |g: &[f64], q: usize| g.get(q * s + cell).copied().unwrap_or(0.0);
     // Tangential (c_n = 0) and outgoing (c_n = −s, known) sums.
@@ -2836,6 +3248,36 @@ fn zou_he(g: &mut [f64], s: usize, cell: usize, axis: usize, sign: f64, a_half: 
             }
         }
     }
+    // A velocity inlet under a collision that relaxes the raw non-equilibrium (`project`): keep only
+    // its second-order, hydrodynamic part (Latt et al. 2008, regularised boundary conditions),
+    // f_q = f_q^eq + w_q / (2 c_s^4) (c_q c_q - c_s^2 I) : Pi^neq, as the regularised collisions do.
+    if project && matches!(target, Target::Velocity(_)) {
+        let mut pi = [[0.0f64; 3]; 3];
+        for q in 0..Q {
+            let v = at(g, q);
+            for a in 0..3 {
+                for b in 0..3 {
+                    pi[a][b] += v * f64::from(C[q][a]) * f64::from(C[q][b]);
+                }
+            }
+        }
+        for a in 0..3 {
+            for b in 0..3 {
+                pi[a][b] -= rho * bare[a] * bare[b] + if a == b { rho * crate::lattice::CS2 } else { 0.0 };
+            }
+        }
+        for q in 0..Q {
+            let mut contracted = 0.0;
+            for a in 0..3 {
+                for b in 0..3 {
+                    contracted += (f64::from(C[q][a]) * f64::from(C[q][b]) - if a == b { crate::lattice::CS2 } else { 0.0 }) * pi[a][b];
+                }
+            }
+            if let Some(x) = g.get_mut(q * s + cell) {
+                *x = equilibrium(q, rho, bare) + W[q] * contracted / (2.0 * crate::lattice::CS2 * crate::lattice::CS2);
+            }
+        }
+    }
 }
 
 /// Set every streamed population of open cell `cell` to the equilibrium of `rho` and `bare` (the
@@ -2876,6 +3318,9 @@ impl crate::backend::Backend for Flow {
 
     fn checkpoint(&mut self, a: &mut dyn crate::checkpoint::Archive) -> Result<()> {
         use crate::checkpoint::{boolean, doubles, f64, fixed, u64, vectors};
+        if !self.characteristic.is_empty() {
+            return Err(Error::Invalid("not supported yet: a checkpoint of a characteristic outlet".into()));
+        }
         // Streaming targets are allocated once, not cloned into a separate snapshot.
         self.targets()?;
         // Every field is named here, without `..`: a new field does not compile until it is
@@ -2898,6 +3343,7 @@ impl crate::backend::Backend for Flow {
             vreman,
             cell_nu_t,
             eddy_ratio,
+            sa,
             walls,
             wall_model,
             wall_bounce,
@@ -2936,6 +3382,11 @@ impl crate::backend::Backend for Flow {
             block: _,
             // Overwritten before use; its capacity is not state.
             open_scratch: _,
+            inlets: _,
+            // `checkpoint` refuses a characteristic outlet until it has a restart layout.
+            characteristic: _,
+            characteristic_rate: _,
+            characteristic_held: _,
             surface,
         } = self;
         let n = *n;
@@ -2989,6 +3440,10 @@ impl crate::backend::Backend for Flow {
                     fixed(a, i.next as u64)?;
                     fixed(a, i.q.to_bits())?;
                     fixed(a, i.du.to_bits())?;
+                    fixed(a, u64::from(i.quadratic))?;
+                    if i.quadratic {
+                        fixed(a, i.next2 as u64)?;
+                    }
                 }
                 Rule::Reflect { from, q, group } => {
                     fixed(a, 2)?;
@@ -3035,6 +3490,11 @@ impl crate::backend::Backend for Flow {
         fixed(a, u64::from(nodes.is_some()))?;
         if let Some(w) = nodes {
             w.checkpoint(a)?;
+        }
+        // ν̃; the wall distance is fixed by the setup and the vorticity rebuilt in each step.
+        fixed(a, u64::from(sa.is_some()))?;
+        if let Some(s) = sa {
+            s.field.archive(a)?;
         }
         vectors(a, forces, groups.len())?;
         let nf = cell_force.len();
@@ -3217,12 +3677,20 @@ impl crate::backend::Backend for Flow {
         Flow::eddy_viscosity_ratio(self)
     }
 
+    fn nu_tilde(&mut self) -> Result<Option<Vec<f64>>> {
+        Ok(self.spalart_allmaras().map(|f| f.nu_tilde().to_vec()))
+    }
+
     fn wall_y_plus(&self) -> Option<f64> {
         Flow::wall_y_plus(self)
     }
 
     fn viscosity_clamps(&self) -> Option<Clamps> {
         Flow::viscosity_clamps(self)
+    }
+
+    fn characteristic_held(&self) -> u64 {
+        Flow::characteristic_held(self)
     }
 
     fn empty_obstacles(&self) -> &[String] {
@@ -3235,5 +3703,9 @@ impl crate::backend::Backend for Flow {
 
     fn conducting(&self) -> &[Vec<u32>] {
         self.thermal.as_ref().and_then(|t| t.solid.as_ref()).map_or(&[], |s| &s.by_solid)
+    }
+
+    fn power_share(&self) -> &[f64] {
+        self.thermal.as_ref().and_then(|t| t.solid.as_ref()).map_or(&[], |s| &s.power_share)
     }
 }

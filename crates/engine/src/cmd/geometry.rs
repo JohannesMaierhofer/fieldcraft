@@ -100,10 +100,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             _ => return Err(EngineError::Params(r#"`model` must be "keep" or "new""#.into())),
         },
     };
-    let path = super::file_param(s, p, "path", Access::Read)?;
-    let bytes = super::file::read_file(&path, design_file_limit(&path) as u64)?;
-    let source = SourceFile::of(super::file::absolute(&path), &bytes)?;
-    let (opened, import_warnings) = open_geometry(&path, &bytes)?;
+    let path = super::path_param(p, "path")?;
+    let checked = s.checked_path(path, Access::Read)?;
+    // A symlink's name selects the reader, including when the saved model reopens its source.
+    let bytes = super::file::read_file(&checked, design_file_limit(path) as u64)?;
+    let source = SourceFile::of(super::file::absolute(path), &bytes)?;
+    let (opened, import_warnings) = open_geometry(path, &bytes)?;
     // The model's partitions cut the design again (a new model has none), and its names are
     // brought to the design's (#605).
     let (design, names) = if new_model {

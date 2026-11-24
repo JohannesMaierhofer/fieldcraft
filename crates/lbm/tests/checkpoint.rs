@@ -72,7 +72,7 @@ fn a_convective_outlet_and_relaxed_fan_resume_with_every_bit_and_history() {
     for collision in COLLISIONS {
         let mut d = domain([0.0; 3], [12.0, 2.0, 2.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.02, 0.0, 0.0], profile: fieldcraft_model::Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
         for f in [&mut d.faces.y_min, &mut d.faces.y_max, &mut d.faces.z_min, &mut d.faces.z_max] {
             *f = FaceCondition::Periodic {};
         }
@@ -333,6 +333,19 @@ fn wall_models_and_every_collision_resume_bit_for_bit() {
         assert!(normal.stats.eddy_viscosity_ratio.unwrap() > 0.0, "{collision:?}: the subgrid model is active");
         let damped = matches!(turbulence, Turbulence::Smagorinsky { van_driest: Some(_), .. });
         assert_eq!(normal.warnings.iter().any(|w| w.contains("y⁺")), damped, "{collision:?}: the wall y⁺ report {:?}", normal.warnings);
+        parity(&m, &[]);
+    }
+}
+
+/// The Spalart–Allmaras model's ν̃ survives a restart bit for bit, in a wall-resolved channel
+/// under the two-relaxation-time and the hybrid collisions.
+#[test]
+fn spalart_allmaras_resumes_bit_for_bit() {
+    for collision in [Collision::Trt, Collision::Hrr] {
+        let turbulence = Turbulence::SpalartAllmaras { prandtl: 0.9, wall_model: None, inflow_ratio: 3.0 };
+        let m = resolved_channel(collision, turbulence);
+        let normal = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
+        assert!(normal.stats.eddy_viscosity_ratio.unwrap() > 0.0, "{collision:?}: the model is active");
         parity(&m, &[]);
     }
 }

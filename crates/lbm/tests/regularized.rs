@@ -234,7 +234,7 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
     let dx = d / cells;
     let mut dom = domain([0.0; 3], [2.2, 0.41, dx], dx);
     dom.faces.x_min = FaceCondition::Velocity { velocity: [1.5, 0.0, 0.0], profile: Profile::Parabolic };
-    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    dom.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     dom.faces.z_min = PERIODIC;
     dom.faces.z_max = PERIODIC;
     dom.initial_velocity = [1.0, 0.0, 0.0];
@@ -266,12 +266,17 @@ fn cylinder_failure(cells: f64, re: f64, steps_run: u64, collision: Collision) -
 #[test]
 #[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
 fn a_coarse_cylinder_wake_stays_stable_where_the_two_relaxation_time_scheme_fails() {
-    // Ten cells across the cylinder: Re 200 is τ⁺ = 0.510, cell Reynolds number 15 at the peak
-    // inlet speed; the inlet and outlet reflect the start-up's pressure waves.
+    // Ten cells across the cylinder: Re 250 is τ⁺ = 0.508, cell Reynolds number 19 at the peak
+    // inlet speed; the inlet and outlet reflect the start-up's pressure waves. The comparison ran
+    // at Re 200 until the extrapolated pressure outlet (#819) and the TRT inlet correction (#820)
+    // removed the boundary-driven failure there: the two-relaxation-time scheme failed at step
+    // 1322 before them and now survives Re 200 and 220. It still fails from Re 240 (step 2199)
+    // while the regularised collision survives up to Re 260, so the test moved to Re 250, inside
+    // that window, to keep comparing the collisions where only one of them is stable.
     let run = 6000;
-    let trt = cylinder_failure(10.0, 200.0, run, Collision::Trt);
-    let regularized = cylinder_failure(10.0, 200.0, run, REGULARIZED);
-    println!("cylinder, D = 10 cells, Re 200: two relaxation times fail at {trt:?}, regularized at {regularized:?} (of {run} steps)");
+    let trt = cylinder_failure(10.0, 250.0, run, Collision::Trt);
+    let regularized = cylinder_failure(10.0, 250.0, run, REGULARIZED);
+    println!("cylinder, D = 10 cells, Re 250: two relaxation times fail at {trt:?}, regularized at {regularized:?} (of {run} steps)");
     assert!(trt.is_some(), "the two-relaxation-time scheme fails here");
     assert_eq!(regularized, None);
 }
@@ -285,7 +290,7 @@ fn channel(n: usize, collision: Collision) -> (f64, f64, f64, f64) {
     let dx = h / n as f64;
     let mut d = domain([0.0; 3], [l, h, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     let dt = 0.1 / 3.0 * dx * dx / nu;
@@ -346,7 +351,7 @@ fn channel_with_a_parabolic_inlet_and_a_pressure_outlet_develops_poiseuille_flow
 fn outlet_channel_failure(steps_run: u64, collision: Collision) -> Option<u64> {
     let mut d = domain([0.0; 3], [48.0, 16.0, 1.0], 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.1, 0.0, 0.0], profile: Profile::Parabolic };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.initial_velocity = [0.1, 0.0, 0.0];
@@ -367,7 +372,7 @@ fn a_regularised_channel_with_a_pressure_outlet_stays_stable_at_tau_0_52() {
 fn a_step_names_its_collision_in_the_setup_and_the_result() {
     let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.25);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     let m = model(1.0, 0.1, d.clone(), collide(0.1, 0.01, None, REGULARIZED));
     let setup = Setup::new(&m, None, &[], &Limits::default()).unwrap();
     assert_eq!(setup.collision, REGULARIZED);

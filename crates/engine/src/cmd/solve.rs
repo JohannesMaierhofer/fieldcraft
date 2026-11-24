@@ -6,9 +6,9 @@ use fieldcraft_explicit::{ExplicitResult, solve_explicit};
 use fieldcraft_lbm::{FluidResult, Obstacle};
 use fieldcraft_mesh::surface::{BoundarySurface, SurfaceOptions};
 use fieldcraft_mesh::tet::geometry::AnalyticSurface;
-use fieldcraft_model::DisplaySystem;
 use fieldcraft_model::FluidDomain;
 use fieldcraft_model::units::Quantity;
+use fieldcraft_model::{BoxFace, DisplaySystem};
 use fieldcraft_parallel as parallel;
 use fieldcraft_solver::{
     FrequencyOptions, Limits, Location, MassKind, StaticResult, StepResult as ImplicitResult, solve_buckle, solve_frequency, solve_heat,
@@ -110,10 +110,52 @@ pub const HISTORY: CommandSpec = CommandSpec {
     run: history,
 };
 
+pub const OUTLET_REFLECTION: CommandSpec = CommandSpec {
+    id: "solve.outlet_reflection",
+    label: "Outlet Reflection Check",
+    params: r#"{"sigma": 0.25 (required), "omegas"?: [0.01, 0.02, 0.04]} — the plane-pulse check of the characteristic pressure outlet (`outflow: "characteristic"`) with relaxation σ, in lattice units, on its own duct (the model is not used): a 2048-cell duct with a velocity inlet at rest and a pressure outlet, TRT τ 0.51, a right-going Gaussian pulse (width 40 cells, amplitude 1e-4) started at cell 1000 and a probe at cell 1300, run 7400 steps with the uniform outlet and with the characteristic one (about 5 s). Returns `rate` (K = σ c_s / L per step), the uniform outlet's `uniform_peak_ratio` (reflected over incident peak: the control, a fully reflecting end), and for the characteristic outlet: `largest_departure` (the largest difference between its reflection and the one-pole response of rate K/2 to the uniform outlet's, Selle, Nicoud & Poinsot 2004, over the incident peak, up to `record_steps`), `tail_level` and `fitted_rate` (the decay rate of its reflection's tail over K/2); per `omegas` (radians per step, at most 16) the `windowed` spectral ratio of reflected to incident pulse over ±5w/c_s steps for the characteristic outlet, the one-pole prediction and the uniform outlet. The windowed ratio includes the truncated relaxation tail: it is not the outlet's |R| at that frequency"#,
+    form: Some(super::forms::OUTLET_REFLECTION),
+    kind: CommandKind::Session,
+    requires: &[],
+    run: outlet_reflection,
+};
+
+/// `solve.outlet_reflection`: the plane-pulse check of the characteristic outlet.
+fn outlet_reflection(_: &mut Session, p: &Value) -> Result<Value> {
+    // Required, without a default: a run takes seconds, so only an explicit call starts one.
+    let sigma: f64 = req(p, "sigma")?;
+    let omegas = match p.get("omegas") {
+        None => vec![0.01, 0.02, 0.04],
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() <= fieldcraft_lbm::reflection::MAX_FREQUENCIES).ok_or_else(|| {
+                EngineError::invalid("omegas", format!("must be a list of at most {} frequencies", fieldcraft_lbm::reflection::MAX_FREQUENCIES))
+            })?;
+            list.iter()
+                .map(|w| w.as_f64().ok_or_else(|| EngineError::invalid("omegas", "must be numbers (radians per step)")))
+                .collect::<Result<Vec<f64>>>()?
+        }
+    };
+    let r = fieldcraft_lbm::reflection::outlet_reflection(sigma, &omegas)?;
+    let rows = |w: &[fieldcraft_lbm::reflection::Windowed]| w.iter().map(|w| json!({"omega": w.omega, "ratio": w.ratio})).collect::<Vec<_>>();
+    Ok(json!({
+        "sigma": r.sigma,
+        "rate": r.rate,
+        "record_steps": r.record_steps,
+        "uniform_peak_ratio": r.uniform_peak_ratio,
+        "incident_peak": r.incident_peak,
+        "largest_departure": r.largest_departure,
+        "tail_level": r.tail_level,
+        "fitted_rate": r.fitted_rate,
+        "windowed": rows(&r.windowed),
+        "predicted_windowed": rows(&r.predicted_windowed),
+        "uniform_windowed": rows(&r.uniform_windowed),
+    }))
+}
+
 pub const FLUID: CommandSpec = CommandSpec {
     id: "solve.fluid",
     label: "Solve Fluid Step",
-    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns `execution` (`completed` or `diverged`), the time step, relaxation time, Mach number, mass, `validity` (density ratios and local Mach extrema including open layers, measured on the field reads the run makes anyway (frames, steady-monitor samples, the final field), at most one per `field_every_steps`, with the caps; force peak/jump ratios; the proposed 0.02 density-departure and 0.2 Mach envelope is a study diagnostic, never validation; excursions between samples are unknown), the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); `ports` reports each open box face's separate inflow and outflow: volume flow, reference-density mass flow, flow-weighted temperature and static gauge pressure, and advective sensible heat relative to its stated temperature reference (not a complete energy balance); the same ports follow the displayed frame in results.* replies and Results > Inlets and outlets; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a free surface, `free_surface`: the liquid's `initial_mass`, its `mass` at the end, what the inlets `injected` and the `mass_error` of that balance (round-off when all is well), the `fill` share of the fluid cells that is liquid and the counts of liquid, interface and gas cells; with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` is required with a checkpoint path (including on resume) and saves every N steps and at a sound final stop; choose its interval for the run size and storage cost; `resume: true` restores it with matching model, triangulated geometry and solver settings; thread count and checkpoint cadence may change; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
+    params: r#"{"step": "Flow", "backend": "cpu", "max_cells": 16000000, "max_steps": 10000000, "max_cell_updates": 1e12, "max_frame_bytes": 2e9, "threads": 8, "estimate": false} — runs a fluid step with the lattice Boltzmann solver (the only fluid step when `step` is left out): obstacles are triangulated from the open design or taken from imported surfaces; returns `execution` (`completed` or `diverged`), the time step, relaxation time, Mach number (`mach`: an estimate from the characteristic velocity), `max_mach` and `max_lattice_speed` (the true largest local Mach number and lattice speed over every fluid cell at the sampled steps, open layers included; a run above Mach 0.1 warns), mass, `validity` (density ratios and local Mach extrema including open layers, measured on the field reads the run makes anyway (frames, steady-monitor samples, the final field), at most one per `field_every_steps`, with the caps; force peak/jump ratios; the proposed 0.02 density-departure and 0.2 Mach envelope is a study diagnostic, never validation; excursions between samples are unknown), the largest speed of all frames (`max_speed`, at `max_speed_time`) and of the last frame (`final_max_speed`), over interior fluid cells (the open-boundary layers are excluded, convective outlets too, because a wake reaching a uniform pressure outlet distorts the last layer), the final force on every wall and, with heat, the thermal relaxation time, the fluid's temperature range and the heat into every wall, and per conducting solid (`solids`) its temperature range and mean, its power, the heat its faces give the fluid, its `peak` temperature (at `peak_time`: the steady value when the run reached steady state, else the highest over the frames), its `limit`, the `margin` (limit less peak; negative over it) and `ok`, and over them `components_ok` (null when no solid has a limit); `ports` reports each open box face's separate inflow and outflow: volume flow, reference-density mass flow, flow-weighted temperature and static gauge pressure, and advective sensible heat relative to its stated temperature reference (not a complete energy balance); the same ports follow the displayed frame in results.* replies and Results > Inlets and outlets; with fans and porous zones, each one's volume flow and its pressure rise (a fan's operating point: `pressure_rise` from its curve, and `measured_pressure_rise`) or `pressure_drop`; the measured values are the static-pressure difference between the fluid cell layers just outside the zone, so they include the wall friction over its thickness plus one cell (final and mean over the last quarter of the run); with a free surface, `free_surface`: the liquid's `initial_mass`, its `mass` at the end, what the inlets `injected` and the `mass_error` of that balance (round-off when all is well), the `fill` share of the fluid cells that is liquid and the counts of liquid, interface and gas cells; with a steady rule, `stop`: why and when the run stopped, its monitors' history (in the display units, `units`) and, with averaging, `averages`: per quantity its mean, its root mean square about the mean (`rms`, a difference: a temperature's in `rms_unit`, without the scale's offset) and its extremes over the samples averaged from `from` on; `backend` is `cpu` (the default: double precision, the same result on every machine) or `gpu` (the step on the GPU `FIELDCRAFT_GPU` picks, single precision, within the backend's stated tolerance of the CPU; an error when the build has none); left out, it is FIELDCRAFT_SOLVE_BACKEND's when that is set, else the step's saved preference (solve.settings), which on a machine with no suitable GPU falls back as it says, with a `notice` (the reply's `backend_choice` says what chose it), else the CPU; `max_steps` may only be lowered; `max_cells` (16000000 by default), `max_cell_updates` (1e12) and `max_frame_bytes` (2e9) may be raised up to what the machine's memory bound holds (half its physical memory), and a run with a raised `max_cells` or `max_frame_bytes` must fit in that bound; the reply's `memory` gives the run's estimate (`flow_bytes`, `frame_bytes` at about 16 bytes per cell per frame, 20 with heat, `total_bytes`) against `bound_bytes`, the `frames_that_fit` and each cap's `ceilings`, and on the GPU the population buffer against the device's limit per buffer; `"estimate": true` returns only that, without solving; a run over a cap is refused before it starts, saying what to change; `checkpoint` is an explicit native CPU restart path; `checkpoint_every` is required with a checkpoint path (including on resume) and saves every N steps and at a sound final stop; choose its interval for the run size and storage cost; `resume: true` restores it with matching model, triangulated geometry and solver settings; thread count and checkpoint cadence may change; checkpoints are kept after success/cancellation, use atomic replacement and report last_checkpoint/resumed_from; GPU/browser/other solvers and automatic discovery are not supported yet; `threads` as for solve.static"#,
     form: Some(super::forms::SOLVE_FLUID),
     kind: CommandKind::Model,
     requires: &[Requirement::FluidDomain, Requirement::Step],
@@ -197,6 +239,14 @@ fn extreme(values: impl Iterator<Item = (u32, f64)>, better: fn(f64, f64) -> boo
 fn with_threads<R: Send>(threads: usize, f: impl FnOnce() -> R + Send) -> R {
     let progress = fieldcraft_model::progress::current();
     parallel::with_threads(threads, move || fieldcraft_model::progress::scoped(progress, f))
+}
+
+/// A solver's `warnings` and, after them, the temperature tables it read beyond their ranges
+/// (`ranges`, in kelvin) worded in the display system; `context` leads each of those.
+fn warnings_with(warnings: &[String], ranges: &[fieldcraft_model::TableRange], display: &DisplaySystem, context: &str) -> Vec<String> {
+    use fieldcraft_model::units::{Quantity, format_number};
+    let show = |kelvin: f64| Quantity::Temperature.format(kelvin, display).unwrap_or_else(|_| format!("{} K", format_number(kelvin)));
+    warnings.iter().cloned().chain(ranges.iter().map(|r| format!("{context}{}", r.message(show)))).collect()
 }
 
 fn run_all(s: &mut Session, _: &Value) -> Result<Value> {
@@ -293,7 +343,7 @@ fn run_static(s: &mut Session, p: &Value) -> Result<Value> {
             "reaction": p.reaction,
         })).collect::<Vec<_>>(),
         "max_temperature": r.temperature.as_ref().map(|t| largest(r.nodes.iter().copied().zip(t.iter().copied()))),
-        "warnings": r.warnings,
+        "warnings": warnings_with(&r.warnings, &r.table_ranges, s.units(), "the step's heat conduction: "),
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Static(r)));
     Ok(summary)
@@ -336,7 +386,7 @@ fn run_nonlinear(s: &mut Session, p: &Value) -> Result<Value> {
             "displacement": p.displacement,
             "reaction": p.reaction,
         })).collect::<Vec<_>>(),
-        "warnings": r.warnings,
+        "warnings": warnings_with(&r.warnings, &r.table_ranges, s.units(), "the step's heat conduction: "),
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Static(r)));
     Ok(summary)
@@ -360,7 +410,7 @@ fn run_heat(s: &mut Session, p: &Value) -> Result<Value> {
         "heat_supplied": r.applied_total,
         "heat_removed": r.reaction_total,
         "heat_flows": crate::results::heat_flows(&r, crate::units::si()),
-        "warnings": r.warnings,
+        "warnings": warnings_with(&r.warnings, &r.table_ranges, s.units(), ""),
     });
     s.store_result(StepResult::Implicit(ImplicitResult::Heat(r)));
     Ok(summary)
@@ -853,6 +903,24 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     if checkpoint_path.is_some() && estimate.memory.backend != fieldcraft_lbm::Choice::Cpu {
         return Err(EngineError::Params("checkpoint/resume currently supports CPU fluid solves only; choose backend: cpu explicitly".into()));
     }
+    let step = opt::<String>(p, "step")?;
+    let (selected_step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    // The characteristic outflow steps on the CPU without checkpoints: refused here, before
+    // anything runs, rather than by the solver once it has started.
+    if let Some((face, _)) = domain.characteristic_outlet() {
+        if checkpoint_path.is_some() {
+            return Err(EngineError::Params(format!(
+                "not supported yet: a checkpoint of a characteristic outflow (box face {}); solve without `checkpoint`",
+                face.name()
+            )));
+        }
+        if estimate.memory.backend != fieldcraft_lbm::Choice::Cpu {
+            return Err(EngineError::Params(format!(
+                "the characteristic outflow (box face {}) is not supported on the GPU yet: solve on the CPU (`backend: \"cpu\"`)",
+                face.name()
+            )));
+        }
+    }
     if opt::<bool>(p, "estimate")? == Some(true) {
         let mut reply = json!({"memory": estimate.to_json()});
         if checkpoint_path.is_some() {
@@ -865,8 +933,7 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     let limits = estimate.limits;
     let backend = estimate.memory.backend;
     let chosen = estimate.backend.clone();
-    let step = opt::<String>(p, "step")?;
-    let (selected_step, domain) = fieldcraft_lbm::fluid_step(&s.model, step.as_deref())?;
+    let planes: Vec<BoxFace> = domain.symmetry_planes().collect();
     let selected_step = selected_step.name.clone();
     let obstacles = obstacles(s, domain)?;
     let thread_count = threads(s, p)?;
@@ -896,6 +963,12 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
         None => EngineError::from(e),
     })?;
     let mut summary = fluid_summary(&r, s.units());
+    if let Some(whole) = whole_model(&summary, &planes) {
+        summary["whole_model"] = whole;
+    }
+    let peak = r.stats.validity.as_ref().and_then(|v| v.peak_mach()).map(|p| p.mach_max);
+    summary["max_mach"] = json!(peak);
+    summary["max_lattice_speed"] = json!(peak.map(|m| m * fieldcraft_lbm::lattice::CS2.sqrt()));
     summary["memory"] = estimate.to_json();
     summary["backend_choice"] = chosen.to_json();
     if let Some(c) = checkpoint {
@@ -912,6 +985,58 @@ fn run_fluid(s: &mut Session, p: &Value) -> Result<Value> {
     r.stats.validity = None;
     s.store_result(StepResult::Fluid(Box::new(r)));
     Ok(summary)
+}
+
+/// The totals of the whole symmetric model a half (or quarter, or eighth) model with symmetry
+/// `planes` stands for, from its reply `summary`: every wall with its mirror images, so each
+/// force's component normal to a plane cancels and the others double per plane, as do the
+/// heats, the solids' powers and heats and the zones' flows. The planes' own faces are inside the
+/// whole model and are left out. `None` without a plane, or when both faces of an axis are
+/// planes (the model is then unbounded along it, and has no whole).
+fn whole_model(summary: &Value, planes: &[BoxFace]) -> Option<Value> {
+    if planes.is_empty() {
+        return None;
+    }
+    let mut axes = [false; 3];
+    for p in planes {
+        let slot = axes.get_mut(p.axis())?;
+        if *slot {
+            return None;
+        }
+        *slot = true;
+    }
+    let factor = f64::from(1u32 << planes.len());
+    let scale = |v: &Value| v.as_f64().map_or(Value::Null, |x| json!(x * factor));
+    // A force's components: the normal one cancels against each mirror image; the others add up
+    // over all of them (`factor` images in all).
+    let mirror = |v: &Value| match v.as_array() {
+        Some(c) => Value::Array(c.iter().zip(axes).map(|(x, normal)| if normal { json!(0.0) } else { scale(x) }).collect()),
+        None => Value::Null,
+    };
+    let history = |v: &Value, total: &dyn Fn(&Value) -> Value| json!({"final": total(&v["final"]), "mean": total(&v["mean"])});
+    let on_plane = |f: &Value| f["body"].is_null() && planes.iter().any(|p| f["name"] == p.name());
+    let list = |key: &str| summary[key].as_array().into_iter().flatten().filter(|f| !on_plane(f));
+    let wall = |f: &Value, total: &dyn Fn(&Value) -> Value| {
+        let mut w = history(f, total);
+        w["name"] = f["name"].clone();
+        w["body"] = f["body"].clone();
+        w
+    };
+    let forces: Vec<Value> = list("forces").map(|f| wall(f, &mirror)).collect();
+    let heat: Vec<Value> = list("heat").map(|h| wall(h, &scale)).collect();
+    let solids: Vec<Value> = list("solids")
+        .map(|c| json!({"body": c["body"], "power": scale(&c["power"]), "heat_to_fluid": history(&c["heat_to_fluid"], &scale)}))
+        .collect();
+    let zones: Vec<Value> = list("zones").map(|z| json!({"name": z["name"], "flow": history(&z["flow"], &scale)})).collect();
+    Some(json!({
+        "planes": planes.iter().map(|p| p.name()).collect::<Vec<_>>(),
+        "factor": factor,
+        "note": format!("totals of the whole symmetric model, {factor} times this one about its symmetry planes: forces, heat, solids' power and heat, zones' flow; each entry is the named wall, solid or zone together with its mirror images (a wall opposite a plane and its image are two walls of the whole model), and a force's component normal to a plane cancels between them; a solid or zone that reaches a plane is part of one body or zone continued across it, so its power or curve was entered for that whole body or zone and this model holds its `power_share` or `share`"),
+        "forces": forces,
+        "heat": heat,
+        "solids": solids,
+        "zones": zones,
+    }))
 }
 
 /// The reply of a fluid solve, in SI but for the steady monitors' history, which is in `display`
@@ -967,6 +1092,10 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
                 "kind": if z.fan { "fan" } else { "porous" },
                 "flow": {"final": z.flow.last(), "mean": tail_mean(&z.flow)},
             });
+            // A zone that reaches a symmetry plane is part of one zone of the whole model.
+            if z.share < 1.0 {
+                v["share"] = json!(z.share);
+            }
             if z.fan {
                 v["pressure_rise"] = json!({"final": z.fan_rise.last(), "mean": tail_mean(&z.fan_rise)});
                 v["measured_pressure_rise"] = json!({"final": z.pressure.last(), "mean": tail_mean(&z.pressure)});
@@ -1002,6 +1131,10 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
             });
             if let Some(((_, lo), (_, hi))) = crate::results::range(&sr.cells, &temps) {
                 v["temperature"] = json!({"min": lo, "max": hi, "mean": temps.iter().sum::<f64>() / temps.len() as f64});
+            }
+            // A solid that reaches a symmetry plane is part of one body, whose power was entered.
+            if sr.power_share < 1.0 {
+                v["power_share"] = json!(sr.power_share);
             }
             if sr.capacity_scale != 1.0 {
                 v["capacity_scale"] = json!(sr.capacity_scale);
@@ -1041,6 +1174,9 @@ fn fluid_summary(r: &FluidResult, display: &DisplaySystem) -> Value {
             "interpolated": w.interpolated,
             "halfway_no_second_node": w.no_second_node,
             "halfway_no_crossing": w.no_crossing,
+            "quadratic": w.quadratic,
+            "linear_moving_wall": w.linear_moving_wall,
+            "linear_too_few_nodes": w.linear_too_few_nodes,
         })),
         "eddy_viscosity_ratio": r.stats.eddy_viscosity_ratio,
         "velocity_scale": r.stats.velocity,
@@ -2013,6 +2149,59 @@ pub(crate) mod tests {
         assert_eq!(s.model, before);
     }
 
+    /// The Spalart–Allmaras model: hostile parameters refused with a message naming them on either
+    /// backend; never a panic, the model unchanged, nothing solved (what the GPU does not run yet
+    /// is lbm-gpu's tests). An unknown field is refused by the command. A valid model solves on the CPU,
+    /// reporting its largest ν_t/ν.
+    #[test]
+    fn spalart_allmaras_solves_on_the_cpu_and_hostile_parameters_are_named() {
+        use fieldcraft_model::{Procedure, Turbulence};
+        let mut s = Session::default();
+        couette(&mut s);
+        let sa = |prandtl: f64, inflow_ratio: f64| Turbulence::SpalartAllmaras { prandtl, wall_model: None, inflow_ratio };
+        let mut cases = Vec::new();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0, 1e300] {
+            cases.push((sa(bad, 3.0), "turbulent Prandtl number"));
+            if bad != 0.0 {
+                cases.push((sa(0.9, bad), "inflow ratio"));
+            }
+        }
+        for (turbulence, want) in cases {
+            let mut step = s.model.step("Shear").unwrap().clone();
+            if let Procedure::Fluid { turbulence: t, .. } = &mut step.procedure {
+                *t = Some(turbulence);
+            }
+            s.model.replace_step(step).unwrap();
+            // Compared as text: a NaN parameter is never equal to itself.
+            let before = format!("{:?}", s.model);
+            for backend in ["cpu", "gpu"] {
+                let error = s.execute("solve.fluid", &json!({"backend": backend})).unwrap_err().to_string();
+                assert!(error.contains(want), "{turbulence:?} on {backend}: {error}");
+                assert_eq!(format!("{:?}", s.model), before);
+                assert_eq!(s.solved_steps().count(), 0);
+            }
+        }
+        let error = s
+            .execute(
+                "model.step.create",
+                &json!({"name": "Bad", "procedure": {"type": "fluid", "domain": "Gap", "end_time": 1, "turbulence": {"type": "spalart_allmaras", "constant": 0.1}}}),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("constant"), "{error}");
+        let mut step = s.model.step("Shear").unwrap().clone();
+        if let Procedure::Fluid { turbulence: t, .. } = &mut step.procedure {
+            *t = Some(sa(0.9, 3.0));
+        }
+        s.model.replace_step(step).unwrap();
+        let reply = s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        // The gap runs at Re 1, where destruction takes ν̃ to 0: the ratio is reported, finite
+        // and not negative (the lbm tests' forced channel shows a positive one).
+        let ratio = reply.get("eddy_viscosity_ratio").and_then(serde_json::Value::as_f64);
+        assert!(ratio.is_some_and(|r| r.is_finite() && r >= 0.0), "{reply}");
+        assert_eq!(s.solved_steps().count(), 1);
+    }
+
     /// A channel filled by a velocity inlet behind a free surface: the solve reports the mass
     /// balance, a line reads the fill level, and `front` gives the liquid's extent and when it
     /// reached a point; hostile parameters are refused.
@@ -2089,6 +2278,10 @@ pub(crate) mod tests {
         assert!(normal.get("validation").is_none());
         assert!(normal["validity"]["samples"].as_array().is_some_and(|s| !s.is_empty()));
         assert_eq!(normal["validity"]["max_field_samples"], 258);
+        let peak = normal["validity"]["extrema"]["mach_max"].as_f64();
+        assert!(peak.is_some_and(|m| m > 0.0), "{normal}");
+        assert_eq!(normal["max_mach"].as_f64(), peak, "{normal}");
+        assert!(normal["max_lattice_speed"].as_f64().zip(peak).is_some_and(|(u, m)| (u * 3f64.sqrt() - m).abs() < 1e-12), "{normal}");
         assert!(normal["validity"]["field_every_steps"].as_u64().is_some_and(|n| n > 0));
         let base = s.clone();
         let request = json!({"backend":"cpu","threads":3,"checkpoint":path,"checkpoint_every":113});
@@ -2187,7 +2380,11 @@ pub(crate) mod tests {
         )
         .unwrap();
         let ri = s.execute("solve.fluid", &json!({})).unwrap();
-        assert_eq!(ri["wall_links"], json!({"interpolated": 0, "halfway_no_second_node": 0, "halfway_no_crossing": 0}), "{ri}");
+        assert_eq!(
+            ri["wall_links"],
+            json!({"interpolated": 0, "halfway_no_second_node": 0, "halfway_no_crossing": 0, "quadratic": 0, "linear_moving_wall": 0, "linear_too_few_nodes": 0}),
+            "{ri}"
+        );
         assert_eq!(ri["forces"], r["forces"], "{ri}");
         assert!(
             s.execute(
@@ -2304,6 +2501,128 @@ pub(crate) mod tests {
         assert!(e.is_err());
     }
 
+    /// The box of `fieldcraft-lbm`'s characteristic outlet test (64 × 4 × 4 cells of 1 m, a
+    /// uniform inlet at 0.05 m/s, periodic sides, TRT τ 0.55 at a time step of 1 s, 2000 steps,
+    /// a frame every 100),
+    /// started impulsively from rest, so the inlet sends a pressure wave down the box. In SI.
+    fn acoustic_box(s: &mut Session) {
+        let periodic = json!({"type": "periodic"});
+        let script = json!([
+            {"command": "model.units", "params": {"system": "m-kg-s-N-Pa"}},
+            {"command": "model.material.create", "params": {"name": "Air", "density": 1.0, "fluid": {"type": "newtonian", "viscosity": 0.05 / 3.0}}},
+            {"command": "model.fluid_domain.create", "params": {"name": "Box", "material": "Air", "min": [0, 0, 0], "max": [64, 4, 4], "spacing": 1,
+                "faces": {"x_min": {"type": "velocity", "velocity": [0.05, 0, 0]}, "x_max": {"type": "pressure", "pressure": 0},
+                    "y_min": periodic, "y_max": periodic, "z_min": periodic, "z_max": periodic}}},
+            {"command": "model.step.create", "params": {"name": "Ring", "procedure": {"type": "fluid", "domain": "Box", "end_time": 2000, "time_step": 1,
+                "frames": 20, "collision": "trt"}}},
+        ]);
+        s.run_script(&script).unwrap();
+    }
+
+    /// The gauge pressure's RMS over the box in each frame of the last fluid solve, in Pa.
+    fn pressure_rms(s: &Session) -> Vec<f64> {
+        let StepResult::Fluid(r) = s.result("Ring").unwrap().as_ref() else { panic!("not a fluid result") };
+        r.frames.iter().map(|f| (f.pressure.iter().map(|p| f64::from(*p).powi(2)).sum::<f64>() / f.pressure.len() as f64).sqrt()).collect()
+    }
+
+    /// `outflow: characteristic` set through the boundary command lets the start-up pressure wave
+    /// out of the box, where the uniform outlet reflects it back and forth; the model keeps σ
+    /// only when it is given, and refuses it out of range or with another outflow.
+    #[test]
+    fn a_characteristic_outlet_is_set_by_command_and_lets_the_start_up_wave_out() {
+        let mut s = Session::default();
+        acoustic_box(&mut s);
+        let faces = |s: &Session| serde_json::to_value(s.model.fluid_domain("Box").unwrap().faces).unwrap();
+        let set = |s: &mut Session, condition: Value| {
+            s.execute("model.fluid_domain.boundary", &json!({"domain": "Box", "at": "x_max", "condition": condition}))
+        };
+
+        s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        let uniform = pressure_rms(&s);
+
+        let before = s.model.clone();
+        for (condition, why) in [
+            (json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 0}), "above 0 and at most 1"),
+            (json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 1.5}), "above 0 and at most 1"),
+            (json!({"type": "pressure", "pressure": 0, "outflow": "uniform", "sigma": 0.25}), "characteristic outflow only"),
+            (json!({"type": "pressure", "pressure": 0, "sigma": 0.25}), "characteristic outflow only"),
+            (json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": "a lot"}), ""),
+        ] {
+            let e = set(&mut s, condition.clone()).unwrap_err().to_string();
+            assert!(e.contains(why), "{condition}: {e}");
+            assert_eq!(s.model, before);
+        }
+        set(&mut s, json!({"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 0.5})).unwrap();
+        assert_eq!(faces(&s)["x_max"], json!({"type": "pressure", "pressure": 0.0, "outflow": "characteristic", "sigma": 0.5}));
+        set(&mut s, json!({"type": "pressure", "pressure": 0, "outflow": "characteristic"})).unwrap();
+        assert_eq!(faces(&s)["x_max"], json!({"type": "pressure", "pressure": 0.0, "outflow": "characteristic"}));
+
+        let r = s.execute("solve.fluid", &json!({"backend": "cpu"})).unwrap();
+        assert_eq!(r["execution"], "completed", "{r}");
+        let characteristic = pressure_rms(&s);
+        for (k, (a, b)) in uniform.iter().zip(&characteristic).enumerate() {
+            println!("frame {k}: pressure RMS {a:.3e} Pa uniform outlet, {b:.3e} Pa characteristic");
+        }
+        // The wave has left: over the last quarter of the run (frames every 100 steps, against the
+        // mode's period of about 440, as the uniform outlet trades pressure for velocity), the
+        // largest RMS left is below a twentieth of the uniform outlet's.
+        let last = |v: &[f64]| v.iter().skip(15).fold(0.0_f64, |m, x| m.max(*x));
+        let (a, b) = (last(&uniform), last(&characteristic));
+        println!("last quarter: largest pressure RMS {a:.3e} Pa uniform outlet, {b:.3e} Pa characteristic");
+        assert!(b < 0.05 * a, "{b} vs {a}");
+    }
+
+    /// A characteristic outflow steps on the CPU without checkpoints: `backend: gpu` and a
+    /// checkpoint path are refused before anything runs or is written.
+    #[test]
+    fn a_characteristic_outlet_refuses_the_gpu_and_checkpoints_before_solving() {
+        let mut s = Session::default();
+        acoustic_box(&mut s);
+        s.execute(
+            "model.fluid_domain.boundary",
+            &json!({"domain": "Box", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic"}}),
+        )
+        .unwrap();
+        let before = s.model.clone();
+        for p in [json!({"backend": "gpu"}), json!({"backend": "gpu", "estimate": true})] {
+            let e = s.execute("solve.fluid", &p).unwrap_err().to_string();
+            assert!(e.contains("characteristic outflow (box face x_max) is not supported on the GPU"), "{p}: {e}");
+        }
+        let path = std::env::temp_dir().join(format!("fieldcraft-characteristic-{}.restart", std::process::id()));
+        assert!(!path.exists());
+        let e = s.execute("solve.fluid", &json!({"backend": "cpu", "checkpoint": path, "checkpoint_every": 10})).unwrap_err().to_string();
+        assert!(e.contains("checkpoint of a characteristic outflow"), "{e}");
+        assert!(!path.exists(), "a refused solve writes no checkpoint");
+        assert_eq!(s.model, before);
+        assert_eq!(s.solved_steps().count(), 0);
+    }
+
+    /// The outlet reflection check refuses a missing or out-of-range σ and bad frequencies at
+    /// once, before any run (the run itself is the oracle case `characteristic-outlet-reflection`).
+    #[test]
+    fn the_outlet_reflection_check_refuses_bad_parameters_before_running() {
+        let mut s = Session::default();
+        let before = s.model.clone();
+        for p in [
+            json!({}),
+            crate::schema::prefill(super::super::forms::OUTLET_REFLECTION, &json!({})),
+            json!({"sigma": 0}),
+            json!({"sigma": 1.5}),
+            json!({"sigma": -0.25}),
+            json!({"sigma": "0.25"}),
+            json!({"sigma": 0.25, "omegas": [0.01, -1]}),
+            json!({"sigma": 0.25, "omegas": [0.01, 4.0]}),
+            json!({"sigma": 0.25, "omegas": ["fast"]}),
+            json!({"sigma": 0.25, "omegas": 0.01}),
+            json!({"sigma": 0.25, "omegas": vec![0.01; 17]}),
+        ] {
+            let started = std::time::Instant::now();
+            assert!(s.execute("solve.outlet_reflection", &p).is_err(), "{p}");
+            assert!(started.elapsed().as_secs_f64() < 0.5, "{p} ran");
+        }
+        assert_eq!(s.model, before);
+    }
+
     /// The Couette gap with heat: the sliding top wall held at 1, the bottom at 0, the fluid's
     /// diffusivity k / (ρ c) = 0.1.
     pub(crate) fn heated_couette(s: &mut Session) {
@@ -2328,6 +2647,68 @@ pub(crate) mod tests {
         .unwrap();
         s.execute("model.fluid_domain.thermal_boundary", &json!({"domain": "Gap", "at": "y_max", "condition": {"type": "temperature", "value": 1}}))
             .unwrap();
+    }
+
+    /// The heated Couette gap as a half model about its z_min face, a symmetry plane: the reply
+    /// adds the whole model's totals, labelled, each wall's force doubled along the plane and
+    /// cancelled across it, its heat doubled, the plane's own face left out. A wall velocity
+    /// across the plane is warned about when it is set.
+    #[test]
+    fn a_half_model_reports_the_whole_models_totals() {
+        let mut s = Session::default();
+        heated_couette(&mut s);
+        s.execute(
+            "model.fluid_domain.edit",
+            &json!({"name": "Gap", "material": "Oil", "min": [0, 0, 0], "max": [0.125, 1, 0.125], "spacing": 0.125,
+            "faces": {"x_min": {"type": "periodic"}, "x_max": {"type": "periodic"}, "z_min": {"type": "symmetry"}, "z_max": {"type": "slip"},
+                "y_max": {"type": "moving_wall", "velocity": [0.1, 0, 0]}},
+            "thermal": {"initial_temperature": 0.5, "faces": {"y_min": {"type": "temperature", "value": 0}, "y_max": {"type": "temperature", "value": 1}}}}),
+        )
+        .unwrap();
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        let whole = &r["whole_model"];
+        assert_eq!((&whole["planes"], &whole["factor"]), (&json!(["z_min"]), &json!(2.0)), "{r}");
+        assert!(whole["note"].as_str().unwrap().contains("whole symmetric model"), "{whole}");
+        let named = |list: &Value, name: &str| list.as_array().unwrap().iter().find(|f| f["name"] == name).cloned();
+        for wall in ["y_min", "y_max"] {
+            let (half, all) = (named(&r["forces"], wall).unwrap(), named(&whole["forces"], wall).unwrap());
+            for key in ["final", "mean"] {
+                let (h, w) = (&half[key], &all[key]);
+                assert_eq!((w[0].as_f64().unwrap(), w[1].as_f64().unwrap()), (2.0 * h[0].as_f64().unwrap(), 2.0 * h[1].as_f64().unwrap()), "{wall}");
+                assert_eq!(w[2], 0.0, "{wall}: across the plane the mirror images cancel");
+            }
+            let (half, all) = (named(&r["heat"], wall).unwrap(), named(&whole["heat"], wall).unwrap());
+            assert_eq!(all["mean"].as_f64().unwrap(), 2.0 * half["mean"].as_f64().unwrap(), "{wall}");
+        }
+        assert!(named(&whole["forces"], "z_min").is_none(), "the plane is inside the whole model");
+
+        let reply = s
+            .execute(
+                "model.fluid_domain.boundary",
+                &json!({"domain": "Gap", "at": "y_max", "condition": {"type": "moving_wall", "velocity": [0.1, 0, 0.01]}}),
+            )
+            .unwrap();
+        let warnings = reply["warnings"].as_array().unwrap();
+        assert!(warnings.len() == 1 && warnings[0].as_str().unwrap().contains("symmetry plane z_min: the wall velocity on y_max"), "{reply}");
+        let reply = s
+            .execute(
+                "model.fluid_domain.boundary",
+                &json!({"domain": "Gap", "at": "y_max", "condition": {"type": "moving_wall", "velocity": [0.1, 0, 0]}}),
+            )
+            .unwrap();
+        assert!(reply.get("warnings").is_none(), "{reply}");
+    }
+
+    /// No whole model without a plane, nor when both faces of an axis are planes (a strip with
+    /// no whole); a quarter model's factor is 4, and only the force along both planes is kept.
+    #[test]
+    fn the_whole_model_needs_planes_that_bound_it() {
+        let summary = json!({"forces": [{"name": "F1", "body": "Pin", "final": [1.0, 2.0, 3.0], "mean": [1.0, 2.0, 3.0]}], "heat": [], "solids": [], "zones": []});
+        assert!(whole_model(&summary, &[]).is_none());
+        assert!(whole_model(&summary, &[BoxFace::YMin, BoxFace::YMax]).is_none());
+        let quarter = whole_model(&summary, &[BoxFace::XMin, BoxFace::YMax]).unwrap();
+        assert_eq!(quarter["factor"], 4.0);
+        assert_eq!(quarter["forces"][0]["final"], json!([0.0, 0.0, 12.0]));
     }
 
     #[test]
@@ -2585,6 +2966,27 @@ pub(crate) mod tests {
             {"command": "model.step.create", "params": {"name": "Blow", "procedure": {"type": "fluid", "domain": "Duct", "steps": 3000, "time_step": 1, "frames": 2}}},
         ]);
         s.run_script(&script).unwrap();
+    }
+
+    /// A fan and grille ending at a symmetry plane report their shares of the whole zones.
+    #[test]
+    fn symmetry_zone_shares_reach_the_solve_reply() {
+        let mut s = Session::default();
+        fan_duct(&mut s);
+        s.execute("model.fluid_domain.boundary", &json!({"domain": "Duct", "at": "z_min", "condition": {"type": "symmetry"}})).unwrap();
+        s.execute(
+            "model.step.edit",
+            &json!({"name": "Blow", "procedure": {"type": "fluid", "domain": "Duct", "steps": 2, "time_step": 1, "frames": 2}}),
+        )
+        .unwrap();
+        let r = s.execute("solve.fluid", &json!({})).unwrap();
+        for (zone, whole) in r["zones"].as_array().unwrap().iter().zip(r["whole_model"]["zones"].as_array().unwrap()) {
+            assert_eq!(zone["share"], 0.5, "{zone}");
+            assert_eq!(whole["name"], zone["name"]);
+            assert_eq!(whole["flow"]["final"].as_f64().unwrap(), 2.0 * zone["flow"]["final"].as_f64().unwrap());
+        }
+        assert_eq!(r["zones"].as_array().unwrap().len(), 2);
+        assert_eq!(r["whole_model"]["zones"].as_array().unwrap().len(), 2);
     }
 
     #[test]

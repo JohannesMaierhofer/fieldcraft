@@ -12,6 +12,8 @@
 
 #[path = "../../lbm/tests/common/mod.rs"]
 mod common;
+#[path = "verification/sa.rs"]
+mod sa;
 #[path = "../../lbm/tests/support/wall_balance.rs"]
 mod wall_balance;
 #[path = "verification/zones.rs"]
@@ -24,7 +26,7 @@ use common::*;
 use fieldcraft_gpu::select::{Policy, gpu_required};
 use fieldcraft_lbm::backend::Backend;
 use fieldcraft_lbm::statistics::Blocks;
-use fieldcraft_lbm::{Flow, Setup};
+use fieldcraft_lbm::{Error, Flow, Setup};
 use fieldcraft_lbm_gpu::{GpuFlow, Options, Streaming};
 use fieldcraft_model::{
     BoxFace, Collision, Directional, FaceCondition, Fluid, FluidDomain, FluidThermal, GeometryRef, HrrSigma, Material, Model, Outflow, Procedure,
@@ -72,7 +74,7 @@ fn gpu(flow: &Flow, streaming: Streaming) -> Option<Gpu> {
         }
         Err(e) if gpu_required() => panic!("a GPU is required: {e}"),
         // Only a missing device skips: a shader that does not compile is a failure anywhere.
-        Err(e) if e.to_string().contains("no GPU device") => {
+        Err(e @ Error::NoDevice) => {
             println!("skipping: {e}");
             None
         }
@@ -329,6 +331,28 @@ fn interpolated_walls_match_the_cpu_fields_and_forces() {
     }
 }
 
+/// The sphere with quadratic interpolated walls (three nodes in line where the cell and the two
+/// behind it are fluid, linear elsewhere), at rest: the GPU's fields and skin force against the
+/// CPU's within the crate's tolerances, every collision and layout. A moving wall keeps the
+/// linear form on both, so only walls at rest are checked here.
+#[test]
+fn quadratic_interpolated_walls_match_the_cpu_fields_and_forces() {
+    for (collision, streaming) in cases() {
+        let (setup, flow) = sphere_flow(collision, WallTreatment::InterpolatedQuadratic, None);
+        let links = flow.wall_links().unwrap();
+        assert!(links.interpolated > 0 && links.halfway() == 0 && links.quadratic > 0, "{links:?}");
+        let fractions = flow.interpolations();
+        assert!(fractions.iter().any(|i| i.quadratic && i.q < 0.5) && fractions.iter().any(|i| i.quadratic && i.q > 0.5));
+        let Some((mut cpu, mut gpu)) = both(&setup, flow, streaming) else { continue };
+        assert_eq!(Backend::wall_links(&*gpu), Some(links));
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (fc, fg, dforce) = skin_forces(&mut cpu, &mut gpu);
+        println!("{collision:?} quadratic sphere: CPU/GPU velocity {du:.2e}, density {drho:.2e}; force CPU {fc:?} GPU {fg:?} ({dforce:.2e})");
+        assert!(du < 2e-5 && drho < 1e-6, "{du} {drho}");
+        assert!(dforce < 5e-5, "{dforce}");
+    }
+}
+
 /// Halfway walls, the default, stay halfway on the GPU: no link interpolates, and the sphere's
 /// GPU drag is the CPU's halfway drag within the tolerance, which interpolated walls move by
 /// far more than it (so the check tells the two apart).
@@ -365,7 +389,7 @@ fn zou_he_channel_matches_the_cpu() {
         let dx = h / 10.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let m = model(1.0, nu, d, collide(2.0 * l / umax, 0.05 * dx / umax, None, collision));
@@ -392,7 +416,7 @@ fn convective_outlet_matches_the_cpu_with_a_vortex_and_backflow() {
         let side = n as f64;
         let mut d = domain([0.0; 3], [side, side, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [u0, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Convective, sigma: None };
         for f in [BoxFace::YMin, BoxFace::YMax, BoxFace::ZMin, BoxFace::ZMax] {
             *d.faces.get_mut(f) = PERIODIC;
         }
@@ -432,8 +456,8 @@ fn edges_of_two_pressure_faces_match_the_cpu() {
         for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
             let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
             d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow };
-            d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow };
+            d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
+            d.faces.y_max = FaceCondition::Pressure { pressure: 0.0, outflow, sigma: None };
             d.faces.z_min = PERIODIC;
             d.faces.z_max = PERIODIC;
             let m = model(1.0, 0.05, d, step(800.0, 1.0, None));
@@ -539,7 +563,7 @@ fn a_heated_channel_matches_the_cpu() {
         let dx = h / 8.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal::default();
@@ -569,7 +593,7 @@ fn wall_heat_at_a_held_inlet_matches_the_cpu() {
         let alpha = 2.0 / 3.0 * umax * h / 200.0;
         let mut d = domain([0.0; 3], [l, h, dx], dx);
         d.faces.x_min = FaceCondition::Velocity { velocity: [umax, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
         let mut t = FluidThermal { initial_temperature: kelvin(0.0), ..FluidThermal::default() };
@@ -632,6 +656,7 @@ fn a_second_solve_reuses_the_compiled_kernels() {
 /// poll returns, which failed as "the readback did not complete" (#800).
 #[test]
 fn concurrent_solves_on_the_shared_device_read_back() {
+    const SOLVES: usize = 4;
     let mut d = domain([0.0; 3], [1.0, 1.0, 0.25], 0.0625);
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
@@ -641,25 +666,32 @@ fn concurrent_solves_on_the_shared_device_read_back() {
     // The other tests wait: these solves share the device only with each other.
     let _turn = turn();
     let solves: Vec<Option<std::result::Result<(), String>>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..4)
+        let handles: Vec<_> = (0..SOLVES)
             .map(|_| {
                 scope.spawn(|| {
                     let mut g = match GpuFlow::with_options(&flow, policy, Options { streaming: Streaming::InPlace, profile: false }) {
                         Ok(g) => g,
-                        Err(e) if !gpu_required() && e.to_string().contains("no GPU device") => return None,
+                        Err(Error::NoDevice) if !gpu_required() => return None,
                         Err(e) => return Some(Err(e.to_string())),
                     };
                     Some((0..40).try_for_each(|_| {
                         g.advance(2).map_err(|e| e.to_string())?;
-                        g.mass().map(|_| ()).map_err(|e| e.to_string())
+                        let mass = g.mass().map_err(|e| e.to_string())?;
+                        if mass.is_finite() && mass > 0.0 { Ok(()) } else { Err(format!("invalid mass read back: {mass}")) }
                     }))
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
+    let mut completed = 0;
     for solve in solves.into_iter().flatten() {
         solve.unwrap();
+        completed += 1;
+    }
+    assert!(completed == SOLVES || (completed == 0 && !gpu_required()), "{completed} of {SOLVES} concurrent solves completed");
+    if completed == 0 {
+        println!("skipping: no GPU device for the concurrent readback test");
     }
 }
 
@@ -801,7 +833,7 @@ fn odd_even_and_chunk_readbacks_match_the_cpu_with_heat_open_and_slip_faces() {
     for (collision, streaming) in cases() {
         let mut d = domain([0.0; 3], [16.0, 8.0, 1.0], 1.0);
         d.faces.x_min = FaceCondition::Velocity { velocity: [0.01, 0.0, 0.0], profile: Profile::Uniform };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
         d.faces.y_max = FaceCondition::Slip {};
         d.faces.z_min = PERIODIC;
         d.faces.z_max = PERIODIC;
@@ -1953,35 +1985,81 @@ fn a_thermal_contact_matches_the_cpu() {
     }
 }
 
+/// A channel 3 × `height` (8 cells per unit) with a parabolic inlet at 1 °C, an outlet, the roof
+/// `roof`, the floor `floor`, and a powered conducting block across y ∈ [0.375, 0.625], run part
+/// way to steady state on the CPU and the GPU (`None` without a GPU).
+fn heated_block_channel(
+    height: f64,
+    roof: FaceCondition,
+    floor: ThermalCondition,
+    power: f64,
+    collision: Collision,
+    streaming: Streaming,
+) -> Option<(Flow, Gpu)> {
+    let (n, nu, alpha) = (8usize, 0.02, 0.02);
+    let dx = 1.0 / n as f64;
+    let mut d = domain([0.0; 3], [3.0, height, dx], dx);
+    d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
+    d.faces.y_max = roof;
+    d.faces.z_min = PERIODIC;
+    d.faces.z_max = PERIODIC;
+    d.obstacles = vec!["Block".into()];
+    let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
+    t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
+    t.faces.y_min = floor;
+    t.solids = vec![conducting("Block", power)];
+    d.thermal = Some(t);
+    let dt = 0.25 * dx * dx / nu;
+    let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, collide(40.0, dt, None, collision));
+    let block = [obstacle("Block", cuboid([0.75, 0.375, -1.0], [1.25, 0.625, 1.0]), &CUBOID_FACES)];
+    let (setup, cpu) = prepare(&m, &block);
+    both(&setup, cpu, streaming)
+}
+
 /// A powered block conducting in a channel flow (parabolic inlet, outlet): the interface links
 /// under advection, against the CPU in velocity, temperature and every face's heat. lavapipe:
 /// temperature 2.5–2.7e-6, heat 3.2–3.3e-6, velocity 1.6–2.0e-6.
 #[test]
 fn a_heated_block_in_a_channel_matches_the_cpu() {
     for (collision, streaming) in cases() {
-        let (n, nu, alpha) = (8usize, 0.02, 0.02);
-        let dx = 1.0 / n as f64;
-        let mut d = domain([0.0; 3], [3.0, 1.0, dx], dx);
-        d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Parabolic };
-        d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
-        d.faces.z_min = PERIODIC;
-        d.faces.z_max = PERIODIC;
-        d.obstacles = vec!["Block".into()];
-        let mut t = FluidThermal { initial_temperature: kelvin(1.0), ..FluidThermal::default() };
-        t.faces.x_min = ThermalCondition::Temperature { value: kelvin(1.0) };
-        t.solids = vec![conducting("Block", 0.01)];
-        d.thermal = Some(t);
-        let dt = 0.25 * dx * dx / nu;
-        let m = cht_model([1.0, nu, alpha], (2.0, [0.5; 3], 1.0), d, collide(40.0, dt, None, collision));
-        let block = [obstacle("Block", cuboid([0.75, 0.375, -1.0], [1.25, 0.625, 1.0]), &CUBOID_FACES)];
-        let (setup, cpu) = prepare(&m, &block);
-        let Some((mut cpu, mut gpu)) = both(&setup, cpu, streaming) else { continue };
+        let Some((mut cpu, mut gpu)) = heated_block_channel(1.0, FaceCondition::Wall {}, ThermalCondition::Adiabatic {}, 0.01, collision, streaming)
+        else {
+            continue;
+        };
         let (du, drho) = field_difference(&mut cpu, &mut gpu);
         let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
         println!("{collision:?} heated block in a channel: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e}");
         // (the regularised collision round the block: density 1.4e-6 on lavapipe)
         assert!(du < 2e-5 && drho < 2e-6, "{du} {drho}");
         assert!(dt < 2e-5 && dh < 2e-5, "{dt} {dh}");
+    }
+}
+
+/// The lower half of [`heated_block_channel`] with its roof a symmetry plane through the block
+/// (crates/lbm/tests/symmetry.rs: the half is the whole's to round-off on the CPU): the plane's
+/// reflected links, the links reflected off the block's mirror image, the half parabola at the
+/// inlet, the solid cells facing their mirror image and the block's power spread over its
+/// mirror images too (it is given its whole power), all read from the CPU's setup, against the
+/// CPU in velocity, temperature, heat and force.
+#[test]
+fn a_half_channel_on_a_symmetry_plane_matches_the_cpu() {
+    for (collision, streaming) in cases() {
+        let floor = ThermalCondition::Temperature { value: kelvin(1.0) };
+        let Some((mut cpu, mut gpu)) = heated_block_channel(0.5, FaceCondition::Symmetry {}, floor, 0.01, collision, streaming) else {
+            continue;
+        };
+        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+        let (dt, dh) = heat_difference(&mut cpu, &mut gpu);
+        let a = Backend::forces(&mut cpu).unwrap();
+        let b = gpu.forces().unwrap();
+        let scale = a.iter().flatten().map(|v| v.abs()).fold(0.0, f64::max).max(1e-30);
+        let df = a.iter().flatten().zip(b.iter().flatten()).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max) / scale;
+        println!(
+            "{collision:?} half channel on a symmetry plane: GPU vs CPU: velocity {du:.2e} density {drho:.2e} temperature {dt:.2e} heat {dh:.2e} force {df:.2e}"
+        );
+        assert!(du < 2e-5 && drho < 2e-6, "{du} {drho}");
+        assert!(dt < 2e-5 && dh < 2e-5 && df < 5e-5, "{dt} {dh} {df}");
     }
 }
 
@@ -1994,7 +2072,7 @@ fn a_conductor_through_the_inlet_and_the_outlet_matches_the_cpu() {
     let dx = 1.0 / n as f64;
     let mut d = domain([0.0; 3], [2.0, 1.0, dx], dx);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.z_min = PERIODIC;
     d.faces.z_max = PERIODIC;
     d.obstacles = vec!["Plate".into()];
@@ -3222,6 +3300,8 @@ impl HanSetup {
                 "smagorinsky: estimate (C D)^2 sqrt(2 S:S) of the finite-difference strain, D Van Driest's at the nominal y+ (the device's is Hou's, from the flux)",
                 " (ν_t a finite-difference estimate)",
             ),
+            // Not a subgrid model: these channel cases never run it.
+            Turbulence::SpalartAllmaras { .. } => ("spalart_allmaras: not a subgrid model, not checked here", ""),
         }
     }
 }
@@ -3402,6 +3482,7 @@ impl ChannelStats {
                     let y_plus = (j as f64 + self.half).min((ny - 1 - j) as f64 + self.half) * self.dx * self.re_tau;
                     (constant * van_driest.map_or(1.0, |a| 1.0 - (-y_plus / a).exp())).powi(2)
                 }
+                Turbulence::SpalartAllmaras { .. } => 0.0,
             })
             .collect();
         let (first, last) = (self.wall_rows, ny - 1 - self.wall_rows);
@@ -3422,6 +3503,7 @@ impl ChannelStats {
             let nu_t = match self.turbulence {
                 Turbulence::Vreman { .. } => vreman::eddy_viscosity(&g, c),
                 Turbulence::Smagorinsky { .. } => c * (2.0 * ss).sqrt(),
+                Turbulence::SpalartAllmaras { .. } => 0.0,
             };
             let ratio = nu_t / self.nu;
             let sigma = match self.sigma {
@@ -4197,7 +4279,7 @@ fn study_taylor_green_vortex_dissipation() {
 fn uniform_pressure_departure(collision: Collision, streaming: Streaming, tau: f64, size: [usize; 3], steps: u64) -> Option<f64> {
     let mut d = domain([0.0; 3], size.map(|n| n as f64), 1.0);
     d.faces.x_min = FaceCondition::Velocity { velocity: [0.05, 0.0, 0.0], profile: Profile::Uniform };
-    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform };
+    d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Outflow::Uniform, sigma: None };
     d.faces.y_min = PERIODIC;
     d.faces.y_max = PERIODIC;
     d.faces.z_min = PERIODIC;
@@ -4328,5 +4410,56 @@ fn validity_extrema_match_injected_fields_and_cpu() {
         let (a, b) = (ForceIndicator::from_history(&cpu_force), ForceIndicator::from_history(&gpu_force));
         assert!((a.peak_over_mean.unwrap() - b.peak_over_mean.unwrap()).abs() < 1e-5, "{a:?} {b:?}");
         assert!((a.largest_jump_over_mean.unwrap() - b.largest_jump_over_mean.unwrap()).abs() < 1e-5, "{a:?} {b:?}");
+    }
+}
+
+/// #820: rotated inlet planes, both signs, and a thin tangential dimension. Odd/even chunks
+/// exercise both AA phases; the two-buffer backend uses the same staged reconstruction.
+#[test]
+fn inlet_reconstruction_matches_cpu_on_every_axis() {
+    for sides in ["slip", "periodic"] {
+        for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+            for axis in 0..3 {
+                for sign in [-1.0, 1.0] {
+                    let mut size = [8; 3];
+                    size[(axis + 2) % 3] = 1;
+                    let mut cpu = common::inlet::box_flow(Collision::Trt, 0.505, sides, 0.0, size, axis, sign);
+                    common::inlet::broadband(&mut cpu, axis, sign, 1e-6);
+                    let Some(mut gpu) = gpu(&cpu, streaming) else { return };
+                    for steps in [1, 2, 17, 40] {
+                        cpu.advance(steps).unwrap();
+                        gpu.advance(steps).unwrap();
+                        let (du, drho) = field_difference(&mut cpu, &mut gpu);
+                        println!("#820 {streaming:?} axis={axis} sign={sign} step={} du={du:.3e} drho={drho:.3e}", cpu.steps_done());
+                        assert!(du <= 2e-5 && drho <= 1e-6, "{du} {drho}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The original #820 failure plus broadband controls, without changing collision or viscosity.
+#[test]
+#[ignore = "heavy: cargo xtask test --heavy (CI heavy job)"]
+fn inlet_perturbations_decay_for_thirty_thousand_steps() {
+    for streaming in [Streaming::InPlace, Streaming::TwoBuffers] {
+        for (tau, seed, random) in [(0.505, 1e-6, false), (0.505, -1e-6, false), (0.505, 1e-6, true), (0.518, 1e-6, true)] {
+            let mut cpu = common::inlet::box_flow(Collision::Trt, tau, "slip", seed, [16; 3], 0, 1.0);
+            if random {
+                common::inlet::broadband(&mut cpu, 0, 1.0, seed);
+            }
+            let Some(mut gpu) = gpu(&cpu, streaming) else { return };
+            let mut windows = [0.0f64; 6];
+            for step in 0..120 {
+                gpu.advance(250).unwrap();
+                windows[step / 20] = windows[step / 20].max(common::inlet::departures(&mut *gpu, 0, 1.0)[0]);
+            }
+            let peak = common::inlet::departures(&mut *gpu, 0, 1.0);
+            println!("#820 {streaming:?} tau={tau} seed={seed} random={random}: final={peak:?}, windows={windows:?}");
+            assert!(peak.into_iter().all(|v| v <= 1e-6), "{peak:?}");
+            // Single-precision roundoff sets the floor, as in the existing GPU uniform-flow tests.
+            assert!(windows[2..].windows(2).all(|w| w[1] <= w[0] + 1e-6), "{windows:?}");
+        }
     }
 }

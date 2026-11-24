@@ -103,13 +103,15 @@ whose forces are read back (a submission's last). The temperature lattice is two
 | Collisions `trt`, `regularized`, `mrt` | yes |
 | Collision `hrr` (hybrid recursive regularised), fixed and dynamic σ | yes |
 | Vreman's subgrid model (`turbulence: {"type": "vreman"}`), with every collision | yes |
-| Walls, moving walls, slip, periodic faces, obstacles, momentum exchange | yes |
+| Walls, moving walls, slip, symmetry planes, periodic faces, obstacles, momentum exchange | yes |
 | Velocity inlets, uniform and convective pressure outlets, edges of open faces | yes |
 | Body acceleration, and changing it between steps | yes |
 | Heat: the D3Q7 lattice, held temperatures, fluxes, buoyancy | yes |
 | Conducting solids, thermal contacts, solid power | yes |
 | Interpolated obstacle walls (`walls: "interpolated"`), moving walls included | yes (within 1.3e-5 of the CPU in the skin force, 6.5e-6 of the peak velocity) |
+| Quadratic interpolated walls (`walls: "interpolated_quadratic"`), at rest (a moving wall keeps the linear form) | yes (within 4.8e-6 of the CPU in the skin force, 6.4e-6 of the peak velocity, on an Apple M4 Max) |
 | Thin walls (`baffles`) | no: refused before a device is opened |
+| The characteristic outflow (`outflow: "characteristic"`) | no: refused before a device is opened |
 | Smagorinsky's model, the wall model (`wall_model: "musker"`), Van Driest damping (`van_driest`) | yes |
 | Steady-state rule and averaging | yes (decided on the host from read-back fields) |
 | Fans and porous zones (curves, Darcy–Forchheimer, loss coefficients), with every collision and wall treatment | yes |

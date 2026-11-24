@@ -113,6 +113,43 @@ the heavy test `corpus_matches_its_fixtures` (CI's heavy job) fail when a part m
 fixture or a mesh breaks an invariant; `cargo xtask corpus --bless <part>` rewrites a fixture.
 docs/meshing/corpus.md gives the bands and the rules for blessing.
 
+## TRT velocity inlet against published closures (#820)
+
+FieldCraft's TRT velocity inlet (`crates/lbm/src/inlet.rs`; literature C3.3e) against the
+published closures, each implemented from its paper behind the same inlet path, on the same three
+cases; all TRT with Λ = 3/16, no turbulence model, measured on CPU (2026-11-13). The comparison
+harness swapped the closure in place and is not committed; the committed tests cover the adopted
+inlet.
+
+- **Slip box**: the #820 16³ box, slip sides, uniform inlet 0.05 (Mach 0.087), convective pressure
+  outlet, a 1e-6 checkerboard or broadband seed; steps survived of 30 000 (the run stops or the
+  density departs by more than 0.1). Survival is checked in 50-step chunks; a solver error reports
+  the last fully completed chunk.
+- **Duct**: walled 48 × 16 × 16, uniform inlet 0.05, convective outlet, τ⁺ = 0.52, 60 000 steps
+  in 1000-step chunks (a solver error reports the last fully completed chunk);
+  over the last 10 000 the total-mass drift per step, the inlet's mass flux against `ρ_b U A`
+  (the prescribed velocity), and inlet against outlet plane.
+- **Poiseuille**: the parabolic-inlet channel of `regularized.rs`, τ⁺ = 0.6, H = 8, 16, 32 cells;
+  the largest profile error over `u_max` at mid-length (order from 16 to 32) and in the first
+  cell inside the inlet, at H = 32.
+
+| Closure | Slip box, checkerboard, τ⁺ 0.505 / 0.507 / 0.51 / 0.52 | Slip box, broadband | Duct: steps; mass drift/step; flux vs `ρ_b U A`; in vs out | Poiseuille: mid error, order; next to inlet |
+|---|---|---|---|---|
+| FieldCraft (Zou–He + trace extrapolation + Shapiro high-pass) | all 30 000 (final ρ′ ≤ 8e-9) | all 30 000 (final ρ′ ≤ 3e-8) | 60 000; 1e-20; 8e-16; 7.9e-5 | 7.7e-5, 1.99; 5.6e-6 |
+| Zou & He 1997 / Hecht & Harting 2010 (`develop`) | 2 800 / 12 200 / 30 000 / 30 000 | 400 / 450 / 600 / 5 700 | fails at 11 000 | 7.7e-5, 2.00; 6.8e-6 |
+| Guo, Zheng & Shi 2002 extrapolation | 300 / 350 / 500 / 23 950 | 300 / 350 / 500 / 27 050 | fails before 1 000 | 3.1e-4, 1.98; 2.7e-4 |
+| Latt et al. 2008 regularised | 400 / 550 / 950 / 30 000 | 450 / 550 / 1 000 / 30 000 | 60 000; 4e-20; 4e-16; 8.0e-5 | 7.7e-5, 2.00; 5.1e-5 |
+| LODI (Izquierdo & Fueyo 2008; Heubes et al. 2014), bounce-back | 1 200 / 1 750 / 6 650 / 20 400 | 1 150 / 1 700 / 6 850 / 22 000 | 60 000; 0; −3.7e-4; 7.7e-5 | 7.6e-5, 1.97; 9.2e-5 |
+| LODI, regularised populations | 300 / 400 / 550 / 11 250 | 300 / 350 / 500 / 11 500 | fails before 1 000 | 9.3e-5, 2.08; 1.5e-4 |
+
+The in-versus-out mismatch of about 8e-5 is the same for every closure that survives: it is the
+outlet plane's, not the inlet's (the inlet plane and the first interior plane agree to 1e-15). The
+LODI inlets use the outgoing amplitude from one-sided interior differences with no pressure
+relaxation; with bounce-back the boundary density is not the cell's, and the inlet's mass flux
+falls 3.7e-4 short of `ρ_b U A`. A sponge or PML layer (Xu & Sagaut 2013; Najafi-Yazdi & Mongeau 2012)
+was not built. Below τ⁺ = 0.505, reachable only with a turbulence model, none of these holds at
+this Mach number (literature C3.3c, C1.5).
+
 ## Long studies
 
 Some studies take hours and run in no CI job; the heavy job (`cargo xtask test --heavy`, 60
@@ -176,6 +213,34 @@ What it does not establish yet:
 - **One realisation per grid.** The means carry the sampling scatter of a single 15 δ/u_τ
   average (about 1 % at 12 cells per δ, from the two platforms above); no confidence interval is
   stated.
+
+### Spalart–Allmaras: wall-resolved channel against its 1-D solution and Moser, Kim & Mansour
+
+The Spalart–Allmaras model (no wall law) in a channel at Re_τ 178.12, one cell along x and z (the
+flow is fully developed), halfway walls, the body force u_τ²/δ, the lattice viscosity fixed at
+0.002 (τ⁺ 0.506) so that Δt ∝ Δx² (`crates/lbm/tests/sa_channel.rs`).
+
+- **Theory (asserted).** The steady 1-D SA solution with the same constants, solved in the test by
+  second-order finite volumes and pseudo-transient Newton, Richardson-extrapolated from 1728 and
+  3456 cells (U_b⁺ 15.850273, U_c⁺ 18.447753, largest correction 7.9e-6 u_τ). The lattice u⁺
+  profile must converge to it at second order: the observed order on the finest pair in [1.8, 2.2],
+  `sa_mms.rs`'s band (heavy test). The trunk test checks the reference's own order and that the
+  coarsest lattice run settles on the turbulent branch.
+- **Benchmark (reported, not asserted).** R. D. Moser, J. Kim, N. N. Mansour, Phys. Fluids
+  11:943–945, 1999, `chan180.means`: U_b⁺ 15.68, U_c⁺ 18.301, C_f 8.135 × 10⁻³. No published
+  SA-against-DNS comparison at this Re_τ gives a tolerance, so the gap is reported as the model's
+  error: the converged 1-D SA solution is +1.09 % in U_b, +0.80 % in U_c and −2.1 % in C_f.
+
+| cells across 2δ | first cell y⁺ | L2 / L∞ of u⁺ against 1-D | U_b⁺ | U_c⁺ | C_f | U_b, U_c, C_f against MKM |
+|---|---|---|---|---|---|---|
+| 96 | 1.86 | 0.130 / 0.138 | 15.726 | 18.310 | 8.087e-3 | +0.30 %, +0.05 %, −0.59 % |
+| 144 | 1.24 | 0.0592 / 0.0628 | 15.794 | 18.385 | 8.018e-3 | +0.73 %, +0.46 %, −1.43 % |
+| 216 | 0.82 | 0.0265 / 0.0280 | 15.825 | 18.420 | 7.986e-3 | +0.92 %, +0.65 %, −1.82 % |
+| 1-D (converged) | — | — | 15.850 | 18.448 | 7.961e-3 | +1.09 %, +0.80 %, −2.1 % |
+
+Observed orders (L2, L∞): 1.937, 1.941 (96→144) and 1.982, 1.996 (144→216). The coarse grids sit
+closer to MKM only because their discretisation error has the opposite sign to the model's.
+The heavy study took 245 s.
 
 ### Wall-modelled LES: Malaspinas & Sagaut reproduced at Re_τ 950
 

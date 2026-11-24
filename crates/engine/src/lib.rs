@@ -22,6 +22,7 @@ pub mod logfile;
 pub mod machine;
 
 pub use cmd::analytic_surfaces;
+pub use cmd::file::OpenFileKind;
 pub use cmd::replace::{MESHERS, Replacement, replacement, thousands};
 pub use cmd::update::enable_checks as enable_update_checks;
 /// Write an output (a picture, an export) where a user named, never over a model or design.
@@ -1110,6 +1111,10 @@ mod tests {
             json!({"domain": "A", "at": "x_mid", "condition": {"type": "wall"}}),
             json!({"domain": "A", "at": {"body": "B", "face": "f"}, "condition": {"type": "pressure", "pressure": 1e308}}),
             json!({"domain": null, "at": null, "condition": null}),
+            json!({"domain": "A", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 1e308}}),
+            json!({"domain": "A", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": -0.0}}),
+            json!({"domain": "A", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": "0.25 m"}}),
+            json!({"domain": "A", "at": "x_max", "condition": {"type": "pressure", "pressure": 0, "outflow": "uniform", "sigma": 1e-320}}),
             json!({"name": "A", "procedure": {"type": "fluid", "domain": "A", "steps": 1e300}}),
             json!({"name": "A", "procedure": {"type": "fluid", "domain": "A", "end_time": -1, "steps": 3}}),
             json!({"name": "Bend", "procedure": {"type": "fluid", "domain": "nope", "end_time": 1}}),

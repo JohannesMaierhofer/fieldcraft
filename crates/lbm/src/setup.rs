@@ -14,7 +14,8 @@
 //! characteristic velocity is the largest of the inlet and wall velocities, the initial velocity,
 //! `√(2 Δp / ρ)` across pressure faces and, for a driving acceleration `a`, the smaller of the
 //! viscous plane-channel peak `a H² / (8 ν)` (H the box's smallest extent) and the free-fall speed
-//! `√(2 a L)` (L its largest).
+//! `√(2 a L)` (L its largest). With a viscosity table both take its thinnest viscosity: the
+//! fastest flow, and the smallest τ⁺.
 //!
 //! # Limits
 //! A run is refused, naming the numbers and what to change, when the lattice Mach number of the
@@ -29,11 +30,11 @@ use fieldcraft_mesh::surface::BoundarySurface;
 use fieldcraft_model::fluid_zones::DEFAULT_FAN_RELAXATION;
 use fieldcraft_model::units::kelvin_above;
 use fieldcraft_model::{
-    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Procedure, Resistance, SurfaceCondition, ThermalCondition,
-    Turbulence, WallModel, WallTreatment,
+    BoxFace, Collision, Directional, FaceCondition, FluidDomain, HrrSigma, Model, Outflow, Procedure, Resistance, SurfaceCondition,
+    TemperatureDependent, ThermalCondition, Turbulence, WallModel, WallTreatment,
 };
 
-use crate::rheology::{Rheology, shear_rate_at_stress};
+use crate::rheology::{Rheology, ViscosityTable, shear_rate_at_stress};
 use crate::voxel::Grid;
 use crate::{Error, Limits, Result};
 
@@ -45,8 +46,9 @@ pub const AUTO_TAU_MAX: f64 = 1.0;
 pub const MAX_MACH: f64 = 0.3;
 /// The smallest symmetric relaxation time τ⁺.
 pub const MIN_TAU: f64 = 0.505;
-/// The smallest τ⁺ of the fluid itself with a turbulence model: the eddy viscosity raises each
-/// sheared cell's own relaxation time above it, which is what lets a coarse grid hold a fast
+/// The smallest τ⁺ of the fluid itself with a subgrid model (not the Spalart–Allmaras model,
+/// whose ν_t is 0 at a wall): the eddy viscosity raises each sheared cell's own relaxation time
+/// above it, which is what lets a coarse grid hold a fast
 /// flow (a cell Reynolds number of 90 is τ⁺ ≈ 0.503 at lattice speed 0.1).
 pub const MIN_TAU_TURBULENT: f64 = 0.5001;
 /// The largest lattice acceleration `a Δt² / Δx`.
@@ -67,6 +69,9 @@ pub const TURBULENT_PRANDTL: std::ops::RangeInclusive<f64> = 0.1..=10.0;
 /// The range of Van Driest's damping constant A⁺ a step takes (26 is Van Driest's; 25 to 30 is
 /// usual).
 pub const VAN_DRIEST: std::ops::RangeInclusive<f64> = 1.0..=100.0;
+
+/// The range of the Spalart–Allmaras inflow ratio ν̃/ν.
+pub const SA_INFLOW_RATIO: std::ops::RangeInclusive<f64> = 0.0..=100.0;
 /// The default two-relaxation-time parameter Λ: bounce-back walls exactly halfway between cells
 /// (Ginzburg, Verhaeghe & d'Humières 2008).
 pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
@@ -83,7 +88,7 @@ pub const DEFAULT_MAGIC: f64 = 3.0 / 16.0;
 pub const THERMAL_MAGIC: f64 = 1.0 / 12.0;
 /// A lattice Mach number above this (with its round-off) is warned about: the compressibility
 /// error, of order Ma², becomes visible.
-const MACH_WARNING: f64 = 0.1 + 1e-12; // unit-factors: a Mach number, with its round-off
+pub(crate) const MACH_WARNING: f64 = 0.1 + 1e-12; // unit-factors: a Mach number, with its round-off
 
 /// The surface of an obstacle body and the persistent name of each of its faces (by the
 /// triangles' face tags); prepared by the caller from the geometry.
@@ -215,6 +220,10 @@ pub struct SolidSetup {
     pub limit: Option<f64>,
     /// Radiation from its faces that touch the fluid, when it radiates.
     pub radiation: Option<RadiationSetup>,
+    /// Its share of one body of the whole model, which its power is for: ½ per symmetry plane
+    /// its geometry reaches (it continues across the plane as its mirror image), else 1. Its
+    /// power is spread over its cells in the box over this, so the box generates this share.
+    pub share: f64,
 }
 
 /// A conducting solid's radiation to its surroundings, in the fluid's lattice heat units: each
@@ -267,6 +276,9 @@ pub struct Setup {
     /// Vreman's model constant c = 2.5 C_s² of its eddy viscosity ([`crate::vreman`]; 0: none).
     /// At most one of `smagorinsky` and `vreman` is above 0.
     pub vreman: f64,
+    /// The Spalart–Allmaras model, when the step takes it ([`crate::sa`]): its eddy viscosity
+    /// then comes from the transported ν̃. Neither `smagorinsky` nor `vreman` is set with it.
+    pub spalart_allmaras: Option<SaSetup>,
     /// Van Driest's damping constant A⁺ of the length scale near walls (none: no damping).
     pub van_driest: Option<f64>,
     /// The wall model of the fluid cells next to no-slip walls (none: the bounce-back alone).
@@ -296,6 +308,15 @@ pub struct Setup {
     /// the cells' range, and that range.
     pub shear_dependent_tau: Option<crate::solve::ShearDependentTau>,
     pub warnings: Vec<String>,
+    /// The run's work caps, for what is built after the setup (the wall distance's transform).
+    pub limits: Limits,
+}
+
+/// The Spalart–Allmaras model's settings ([`crate::sa`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SaSetup {
+    /// ν̃/ν at inflows and in the initial field.
+    pub inflow_ratio: f64,
 }
 
 /// What a zone of the domain does, in lattice units.
@@ -317,6 +338,9 @@ pub struct ZoneSetup {
     pub hi: [usize; 3],
     /// The axis the flow goes through it along (its thickness and its reported flow).
     pub axis: usize,
+    /// Its share of one zone of the whole model: ½ per symmetry plane it reaches (it continues
+    /// across the plane as its mirror image), else 1. A fan's curve is read at its flow over this.
+    pub share: f64,
 }
 
 impl ZoneSetup {
@@ -347,6 +371,63 @@ fn cell_range(grid: &Grid, min: [f64; 3], max: [f64; 3]) -> Option<([usize; 3], 
     Some((lo, hi))
 }
 
+/// The symmetry planes a part of the model (a fan, porous zone or solid) is continued across:
+/// every plane but those of an axis whose two faces are both planes (an unbounded strip, which
+/// has no whole model).
+pub(crate) fn mirror_planes(domain: &FluidDomain) -> Vec<BoxFace> {
+    domain.symmetry_planes().filter(|p| !domain.faces.get(p.opposite()).is_symmetry()).collect()
+}
+
+/// The obstacles a symmetry plane cuts off their middle, one message each: an obstacle that
+/// reaches past the plane is solved as its part in the box and that part's mirror image, which
+/// is not the obstacle unless its extent across the plane is symmetric about it. (Its bounding
+/// box is checked, which an asymmetric shape can pass; one that ends at the plane is the half
+/// of a body the half model is meant to solve and is not warned about.)
+fn obstacle_symmetry_warnings(domain: &FluidDomain, obstacles: &[Obstacle]) -> Vec<String> {
+    const SYMMETRIC: f64 = 1e-6; // unit-factors: relative to the spacing
+    let mut out = Vec::new();
+    for plane in domain.symmetry_planes() {
+        let at = domain.face_at(plane);
+        for o in obstacles.iter().filter(|o| domain.obstacles.contains(&o.body)) {
+            let (lo, hi) = extent(o, plane.axis());
+            if !domain.plane_cuts(plane, lo, hi) {
+                continue;
+            }
+            if ((at - lo) - (hi - at)).abs() > SYMMETRIC * domain.spacing {
+                out.push(format!(
+                    "symmetry plane {}: it cuts obstacle `{}` off its middle, so the half model solves its part in the box and that part's mirror image, not the obstacle",
+                    plane.name(),
+                    o.body
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Obstacle `o`'s extent along `axis`, from its surface's points.
+fn extent(o: &Obstacle, axis: usize) -> (f64, f64) {
+    let along = o.surface.points().iter().filter_map(|p| p.get(axis).copied());
+    along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)))
+}
+
+/// The share of a part of the model in the box whose geometry spans `min..max`: a part that
+/// reaches a symmetry plane is half of one part of the whole model, continued across the plane
+/// as its mirror image, so ½ per plane it reaches; 1 for one clear of every plane (its mirror
+/// image is a second part). Decided from the geometry, as [`FluidDomain::symmetry_warnings`]
+/// does, never from the cells it falls in: a part a fraction of a cell short of a plane can
+/// still have cells on it.
+fn mirror_share(domain: &FluidDomain, min: [f64; 3], max: [f64; 3]) -> f64 {
+    let span = |axis: usize| (min.get(axis).copied().unwrap_or(0.0), max.get(axis).copied().unwrap_or(0.0));
+    mirror_planes(domain)
+        .iter()
+        .filter(|p| {
+            let (lo, hi) = span(p.axis());
+            domain.reaches_plane(**p, lo, hi)
+        })
+        .fold(1.0, |share, _| share * 0.5)
+}
+
 /// The domain's porous zones and fans in lattice units.
 fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f64) -> Result<Vec<ZoneSetup>> {
     let h = grid.spacing;
@@ -369,27 +450,52 @@ fn zones(domain: &FluidDomain, grid: &Grid, viscosity: f64, dt: f64, density: f6
         if !(alpha.is_finite() && beta.is_finite()) {
             return Err(Error::Invalid(format!("porous zone `{}`: its resistance is too large for this lattice", z.name)));
         }
-        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis });
+        let share = mirror_share(domain, z.min, z.max);
+        out.push(ZoneSetup { name: z.name.clone(), kind: ZoneKind::Porous { alpha, beta }, lo, hi, axis, share });
     }
     for f in &domain.fans {
         let (lo, hi) = place("fan", &f.name, f.min, f.max)?;
         let (axis, sign) = f.direction.axis_sign();
-        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
+        // A fan that reaches a symmetry plane is part of one fan of the whole model, so its flow
+        // in the box is its share of the whole fan's: its curve is read at the whole fan's flow.
+        let share = mirror_share(domain, f.min, f.max);
+        let curve: Vec<[f64; 2]> = f.curve.iter().map(|p| [share * p[0] / volume_flow_scale, p[1] / pressure_scale]).collect();
         if curve.iter().flatten().any(|v| !v.is_finite()) {
             return Err(Error::Invalid(format!("fan `{}`: its curve does not fit this lattice", f.name)));
         }
         let relaxation = f.relaxation.unwrap_or(DEFAULT_FAN_RELAXATION);
-        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis });
+        out.push(ZoneSetup { name: f.name.clone(), kind: ZoneKind::Fan { sign, curve, relaxation }, lo, hi, axis, share });
     }
     Ok(out)
 }
 
-/// The domain's conducting obstacles in lattice units (`rho_c` the fluid's `ρ c`).
-fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String], rho_c: f64, dt: f64, h: f64) -> Result<Vec<SolidSetup>> {
+/// The conductivity, specific heat and density tables of `d` the fluid solver does not follow
+/// yet, as the end of a warning: "conductivity, density at their constants (…)".
+fn held_tables(d: &TemperatureDependent) -> Option<String> {
+    let held: Vec<&str> = d.tables().map(|(what, _)| what).filter(|what| *what != "viscosity").collect();
+    let its = if held.len() == 1 { "its" } else { "their" };
+    (!held.is_empty())
+        .then(|| format!("{} at {its} constant (the values the material keeps), not following {its} temperature table yet", held.join(", ")))
+}
+
+/// The domain's conducting obstacles in lattice units (`rho_c` the fluid's `ρ c`), their
+/// geometry from `geometry` (the caller's obstacles); a solid whose material has temperature
+/// tables is warned of in `warnings` (its constants hold).
+fn solids(
+    model: &Model,
+    domain: &FluidDomain,
+    t: &fieldcraft_model::FluidThermal,
+    geometry: &[Obstacle],
+    rho_c: f64,
+    dt: f64,
+    h: f64,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<SolidSetup>> {
     let scale = dt / (h * h);
     let mut out = Vec::with_capacity(t.solids.len());
     for c in &t.solids {
-        let obstacle = obstacles
+        let obstacle = domain
+            .obstacles
             .iter()
             .position(|o| *o == c.body)
             .ok_or_else(|| Error::NotFound(format!("conducting solid `{}` is not an obstacle of the domain", c.body)))?;
@@ -399,6 +505,9 @@ fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String
                 "conducting solid `{}`: a phase change in a conducting solid is not supported yet (only the fluid melts and freezes)",
                 c.body
             )));
+        }
+        if let Some(held) = m.and_then(|m| m.temperature_dependent.as_ref()).and_then(held_tables) {
+            warnings.push(format!("conducting solid `{}`: the fluid solver holds material `{}`'s {held}", c.body, c.material));
         }
         let props = m.and_then(|m| m.thermal.as_ref());
         let (Some(k), Some(cp), Some(density)) = (props.and_then(|p| p.conductivity), props.and_then(|p| p.specific_heat), m.and_then(|m| m.density))
@@ -421,7 +530,14 @@ fn solids(model: &Model, t: &fieldcraft_model::FluidThermal, obstacles: &[String
                 Ok(RadiationSetup { emit, ambient: rad.ambient })
             })
             .transpose()?;
-        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit, radiation });
+        let share = geometry.iter().find(|o| o.body == c.body).map_or(1.0, |o| {
+            let (min, max) = (0..3).fold(([0.0; 3], [0.0; 3]), |(mut min, mut max), axis| {
+                (min[axis], max[axis]) = extent(o, axis);
+                (min, max)
+            });
+            mirror_share(domain, min, max)
+        });
+        out.push(SolidSetup { body: c.body.clone(), obstacle, conductivity, capacity, capacity_scale: 1.0, power, limit: c.limit, radiation, share });
     }
     Ok(out)
 }
@@ -529,9 +645,9 @@ impl Setup {
         }
         // Interpolated walls replace the bounce-back of the obstacles' links; the wall models and
         // the free surface rebuild or reflect those populations their own way.
-        if *walls == WallTreatment::Interpolated {
+        if walls.is_interpolated() {
             let refuse = |what: String| {
-                Err(Error::Invalid(format!("not supported yet: interpolated walls (`walls: \"interpolated\"`) {what}; use `walls: \"halfway\"`")))
+                Err(Error::Invalid(format!("not supported yet: interpolated walls (`walls: \"{}\"`) {what}; use `walls: \"halfway\"`", walls.name())))
             };
             if turbulence.as_ref().and_then(|t| t.wall_model()).is_some() {
                 return refuse("with a wall model (`wall_model`)".into());
@@ -539,25 +655,16 @@ impl Setup {
             if domain.free_surface.is_some() {
                 return refuse("with a free surface (`free_surface`)".into());
             }
+            if matches!(turbulence, Some(Turbulence::SpalartAllmaras { .. })) {
+                return refuse("with the Spalart–Allmaras model (`spalart_allmaras`)".into());
+            }
         }
         let walls = *walls;
         let domain = domain.clone();
-        let (smagorinsky, vreman, turbulent_prandtl, van_driest, wall_model) = match turbulence {
-            None => (0.0, 0.0, 0.9, None, None),
+        let (smagorinsky, vreman, spalart_allmaras, turbulent_prandtl, van_driest, wall_model) = match turbulence {
+            None => (0.0, 0.0, None, 0.9, None, None),
             Some(t) => {
-                let (constant, prandtl, van_driest) = (t.constant(), t.prandtl(), t.van_driest());
-                let (smagorinsky, vreman, what, usual) = match t {
-                    Turbulence::Smagorinsky { .. } => (constant, 0.0, "the Smagorinsky constant", "0.1 to 0.2"),
-                    Turbulence::Vreman { .. } => (
-                        0.0,
-                        crate::vreman::model_constant(constant),
-                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
-                        "0.17 to 0.18",
-                    ),
-                };
-                if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
-                    return Err(Error::Invalid(format!("{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)")));
-                }
+                let (prandtl, van_driest) = (t.prandtl(), t.van_driest());
                 if !(prandtl.is_finite() && TURBULENT_PRANDTL.contains(&prandtl)) {
                     return Err(Error::Invalid(format!(
                         "the turbulent Prandtl number is {prandtl}: give one from {} to {} (0.85 to 0.9 is usual)",
@@ -565,14 +672,50 @@ impl Setup {
                         TURBULENT_PRANDTL.end()
                     )));
                 }
-                if let Some(a_plus) = van_driest.filter(|a| !(a.is_finite() && VAN_DRIEST.contains(a))) {
-                    return Err(Error::Invalid(format!(
-                        "Van Driest's damping constant A⁺ is {a_plus}: give one from {} to {} (26 is usual)",
-                        VAN_DRIEST.start(),
-                        VAN_DRIEST.end()
-                    )));
+                let subgrid = |smagorinsky: f64, vreman: f64, constant: f64, what: &str, usual: &str| {
+                    if !(constant.is_finite() && constant > 0.0 && constant <= MAX_SMAGORINSKY) {
+                        return Err(Error::Invalid(format!(
+                            "{what} is {constant}: give one above 0 and at most {MAX_SMAGORINSKY} ({usual} is usual)"
+                        )));
+                    }
+                    if let Some(a_plus) = van_driest.filter(|a| !(a.is_finite() && VAN_DRIEST.contains(a))) {
+                        return Err(Error::Invalid(format!(
+                            "Van Driest's damping constant A⁺ is {a_plus}: give one from {} to {} (26 is usual)",
+                            VAN_DRIEST.start(),
+                            VAN_DRIEST.end()
+                        )));
+                    }
+                    Ok((smagorinsky, vreman, None, prandtl, van_driest, t.wall_model()))
+                };
+                match *t {
+                    Turbulence::Smagorinsky { constant, .. } => subgrid(constant, 0.0, constant, "the Smagorinsky constant", "0.1 to 0.2")?,
+                    Turbulence::Vreman { constant, .. } => subgrid(
+                        0.0,
+                        crate::vreman::model_constant(constant),
+                        constant,
+                        "the constant of Vreman's model (the Smagorinsky-equivalent C_s of c = 2.5 C_s²)",
+                        "0.17 to 0.18",
+                    )?,
+                    // No subgrid constant and no Van Driest damping (the variant has no such field).
+                    Turbulence::SpalartAllmaras { inflow_ratio, .. } => {
+                        if !(inflow_ratio.is_finite() && SA_INFLOW_RATIO.contains(&inflow_ratio)) {
+                            return Err(Error::Invalid(format!(
+                                "the Spalart–Allmaras inflow ratio ν̃/ν is {inflow_ratio}: give one from {} to {} (3 is usual)",
+                                SA_INFLOW_RATIO.start(),
+                                SA_INFLOW_RATIO.end()
+                            )));
+                        }
+                        // A wall law's rate would replace ν_t at the wall cell while ν̃ keeps its own
+                        // wall condition (ν̃ = 0, d = ½) at a cell the law means for y⁺ 30 to 100:
+                        // the two disagree until a wall law is chosen for the model.
+                        if t.wall_model().is_some() {
+                            return Err(Error::Invalid(
+                                "not supported yet: a wall model (`wall_model`) with the Spalart–Allmaras model (`spalart_allmaras`); resolve the wall (the first cell at y⁺ 1 or below) and leave `wall_model` out".into(),
+                            ));
+                        }
+                        (0.0, 0.0, Some(SaSetup { inflow_ratio }), prandtl, None, None)
+                    }
                 }
-                (smagorinsky, vreman, prandtl, van_driest, t.wall_model())
             }
         };
         let material = model.material(&domain.material);
@@ -603,6 +746,13 @@ impl Setup {
                     z.name
                 )));
             }
+        }
+        // `Flow::characteristic_outlet` keeps one face's state and relaxation rate.
+        if let Some((face, _)) = domain.characteristic_outlets().nth(1) {
+            return Err(Error::Invalid(format!(
+                "not supported yet: a characteristic outflow on more than one box face (a second on `{}`)",
+                face.name()
+            )));
         }
         // A free surface runs with walls, slip faces, periodic faces and velocity inlets, on a
         // Newtonian isothermal fluid without zones or a turbulence model; everything else is
@@ -652,6 +802,42 @@ impl Setup {
         let grid = Grid { origin: domain.min, spacing: domain.spacing, cells };
         let h = domain.spacing;
 
+        // A half model whose inputs cross its symmetry plane solves something else than half.
+        let mut warnings = domain.symmetry_warnings();
+        warnings.extend(obstacle_symmetry_warnings(&domain, obstacles));
+        // A Newtonian fluid's viscosity table, followed cell by cell when the fluid carries heat
+        // (each cell's temperature) and nothing needs one viscosity (a turbulence model, porous
+        // zones); otherwise the constant holds. The fluid's other tables hold their constants.
+        let tables = material.and_then(|m| m.temperature_dependent.as_ref());
+        let table = match tables.and_then(|d| d.viscosity.as_ref()).filter(|_| newtonian.is_some()) {
+            Some(t) if domain.thermal.is_some() && turbulence.is_none() && domain.porous.is_empty() => {
+                Some(ViscosityTable::new(t).ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "material `{}`: the viscosity table must have 2 to {} points, at increasing finite temperatures, each with a finite positive viscosity",
+                        domain.material,
+                        crate::rheology::MAX_TABLE_POINTS,
+                    ))
+                })?)
+            }
+            Some(_) => {
+                // A free surface carries no heat yet, so adding heat is no remedy there.
+                let remedy = if domain.free_surface.is_some() { "; a free-surface flow carries no heat yet, so it keeps the constant" } else { "" };
+                warnings.push(format!(
+                    "material `{}`: the viscosity is held at its constant {:e}; the fluid solver follows the viscosity table only with heat in the fluid (`thermal`) and without a turbulence model or porous zones{remedy}",
+                    domain.material,
+                    fluid.newtonian().unwrap_or_default()
+                ));
+                None
+            }
+            None => None,
+        };
+        if let Some(held) = tables.and_then(held_tables) {
+            warnings.push(format!("material `{}`: the fluid solver holds the {held}", domain.material));
+        }
+        // The thinnest kinematic viscosity a cell takes: a viscosity table's lowest, else the
+        // constant (a shear-dependent fluid has none).
+        let thinnest = table.as_ref().map(|t| t.range()[0] / density).or(newtonian);
+
         // The characteristic velocity.
         let mut u_char: f64 = norm(domain.initial_velocity);
         let mut pressures = Vec::new();
@@ -659,7 +845,7 @@ impl Setup {
             match *domain.faces.get(face) {
                 FaceCondition::MovingWall { velocity } | FaceCondition::Velocity { velocity, .. } => u_char = u_char.max(norm(velocity)),
                 FaceCondition::Pressure { pressure, .. } => pressures.push(pressure),
-                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Periodic {} => {}
+                FaceCondition::Wall {} | FaceCondition::Slip {} | FaceCondition::Symmetry {} | FaceCondition::Periodic {} => {}
             }
         }
         for sb in &domain.surfaces {
@@ -688,7 +874,8 @@ impl Setup {
             u_char = u_char.max((2.0 * a * large).sqrt());
         } else if a > 0.0 {
             let large = extents.iter().copied().fold(0.0, f64::max);
-            let viscous = match newtonian {
+            // The thinnest viscosity flows fastest, so the Mach check holds in every cell.
+            let viscous = match thinnest {
                 Some(viscosity) => a * small * small / (8.0 * viscosity),
                 // A plane channel's wall stress ρ a H / 2 holds for any fluid; at its wall shear
                 // rate γ̇_w the Newtonian peak speed is γ̇_w H / 4.
@@ -718,7 +905,9 @@ impl Setup {
         };
 
         // The time step and the number of steps.
-        let diffusive = (AUTO_TAU_MAX - 0.5) * h * h / (3.0 * viscosity);
+        // Sized at the thinnest viscosity, whose τ⁺ is the smallest, so a step the solver chose
+        // never puts a cell below the floor.
+        let diffusive = (AUTO_TAU_MAX - 0.5) * h * h / (3.0 * thinnest.unwrap_or(viscosity));
         let auto = if u_char > 0.0 { (TARGET_LATTICE_VELOCITY * h / u_char).min(diffusive) } else { diffusive };
         let (dt, n) = match (*time_step, *end_time, *steps) {
             (Some(dt), Some(t), _) => {
@@ -765,27 +954,44 @@ impl Setup {
                 "the lattice Mach number is {mach:.3} (velocity {u_char} with time step {dt} and spacing {h}), above {MAX_MACH}: lower the time step"
             )));
         }
-        let mut warnings = Vec::new();
         // A shear-dependent fluid in lattice units; its temperatures count from the scalar
         // lattice's zero.
-        let rheology = newtonian.is_none().then(|| Rheology {
+        let viscosity_scale = dt / (density * h * h);
+        // A viscosity table's τ range, from its thinnest to its most viscous point: a cell's
+        // temperature never takes it outside, so no cell is clamped.
+        let table_tau = table.as_ref().map(|t| t.range().map(|mu| 0.5 + 3.0 * mu * viscosity_scale));
+        let rheology = (newtonian.is_none() || table.is_some()).then(|| Rheology {
             fluid,
             rate_scale: 1.0 / dt,
-            viscosity_scale: dt / (density * h * h),
-            tau: [MIN_TAU, crate::rheology::MAX_TAU],
+            viscosity_scale,
+            tau: table_tau.map_or([MIN_TAU, crate::rheology::MAX_TAU], |[_, high]| [MIN_TAU, high.max(crate::rheology::MAX_TAU)]),
             zero: domain.thermal.as_ref().map_or(initial_kelvin, |t| t.temperature_zero),
+            table,
         });
         let shear_dependent_tau = rheology.as_ref().map(|r| crate::solve::ShearDependentTau { characteristic: tau_plus, range: r.tau });
-        let tau_plus = if let Some(r) = &rheology {
+        let tau_plus = if let Some([thinnest, _]) = table_tau {
+            // A viscosity table: the thinnest viscosity sets the smallest τ⁺ a cell takes, refused
+            // below the floor as a constant viscosity is.
+            if !(thinnest >= MIN_TAU) {
+                return Err(Error::Invalid(format!(
+                    "the relaxation time τ = {thinnest:.5} at the thinnest viscosity of material `{}`'s viscosity table is below {MIN_TAU}: the grid cannot resolve it at this time step; refine the spacing or raise the time step",
+                    domain.material
+                )));
+            }
+            tau_plus.max(thinnest)
+        } else if let Some(r) = &rheology {
             // A shear-dependent fluid: τ⁺ at the characteristic shear rate, while each cell takes
             // its own within [τ_min, τ_max]. A cell sheared past τ_min's viscosity is floored
             // there (counted), so only a fluid floored at every shear rate is refused.
             shear_dependent_floor(r, &domain, initial_kelvin, tau_plus, &mut warnings)?;
             tau_plus.clamp(r.tau[0], r.tau[1])
         } else {
-            let min_tau = if turbulence.is_some() { MIN_TAU_TURBULENT } else { MIN_TAU };
+            // The Spalart–Allmaras model keeps the laminar floor: its ν_t goes to 0 at a wall
+            // (ν̃ = 0 there), so the wall cells, the most sheared, keep the fluid's own τ⁺.
+            let eddy = turbulence.as_ref().is_some_and(|t| !matches!(t, Turbulence::SpalartAllmaras { .. }));
+            let min_tau = if eddy { MIN_TAU_TURBULENT } else { MIN_TAU };
             if !(tau_plus >= min_tau) {
-                let model = if turbulence.is_some() { "" } else { ", or add a turbulence model (`turbulence`)" };
+                let model = if turbulence.is_none() { ", or add a turbulence model (`turbulence`)" } else { "" };
                 return Err(Error::Invalid(format!(
                     "the relaxation time τ = {tau_plus:.5} is below {min_tau}: the grid cannot resolve viscosity {viscosity} at this time step (cell Reynolds number {:.1}); refine the spacing or raise the time step{model}",
                     if nu > 0.0 { lattice_velocity / nu } else { f64::INFINITY }
@@ -793,6 +999,8 @@ impl Setup {
             }
             tau_plus
         };
+        // The smallest τ⁺ a cell takes, for the stability warnings below: a table's thinnest.
+        let smallest_tau = table_tau.map_or(tau_plus, |[thinnest, _]| thinnest);
         let magic_given = magic.is_some();
         let magic = magic.unwrap_or(DEFAULT_MAGIC);
         let tau_minus = 0.5 + magic / (tau_plus - 0.5);
@@ -884,7 +1092,7 @@ impl Setup {
                     faces,
                     heat_scale: rho_c * h * h * h / dt,
                     conductivity: alpha,
-                    solids: solids(model, t, &domain.obstacles, rho_c, dt, h)?,
+                    solids: solids(model, &domain, t, obstacles, rho_c, dt, h, &mut warnings)?,
                     contacts: contacts(t, rho_c, dt, h)?,
                     phase,
                 })
@@ -984,18 +1192,52 @@ impl Setup {
                 "dynamic σ needs a subgrid model's eddy viscosity: add `turbulence` (Vreman's or Smagorinsky's model)".into(),
             ));
         }
+        if dynamic_sigma && spalart_allmaras.is_some() {
+            return Err(Error::Invalid(
+                "not supported yet: dynamic σ with the Spalart–Allmaras model, whose Reynolds-averaged eddy viscosity is not a subgrid one; give a fixed `sigma`".into(),
+            ));
+        }
         let hybrid_sigma = HrrSigma::fixed(*sigma);
         if collision != Collision::Hrr && sigma.is_some() {
             warnings.push(format!("the hybrid collision's σ (`sigma`) has no effect with the {} collision", collision.name()));
         }
-        if tau_plus < 0.51 && collision == Collision::Trt {
+        if smallest_tau < 0.51 && collision == Collision::Trt {
             warnings.push(format!(
-                "τ = {tau_plus:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
+                "τ = {smallest_tau:.4} is close to ½: under-resolved flows may go unstable; a finer spacing or the regularized collision (`collision: \"regularized\"`) is safer"
             ));
         }
-        if tau_plus < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
+        // Below MIN_TAU (reachable only with a turbulence model) the TRT velocity inlet did not
+        // hold a 1e-6 disturbance at #820's Mach number 0.087 (16³ box: departures of 2e-3–1e-2
+        // at τ = 0.5005, 5e-3 and more at 0.5025–0.503), and with Λ = 3/16 the uniform stream
+        // itself is linearly unstable for τ ≤ 0.502 at that speed (tests/trt_stability.rs); a
+        // uniform inflow has no eddy viscosity to lift the inlet cell's τ.
+        if smallest_tau < MIN_TAU
+            && collision == Collision::Trt
+            && domain.free_surface.is_none()
+            && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. }))
+        {
             warnings.push(format!(
-                "τ = {tau_plus:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
+                "τ = {smallest_tau:.4} is below {MIN_TAU}, where the two-relaxation-time velocity inlet is not stable: a uniform inflow has no eddy viscosity to raise it; a finer spacing or a longer time step is safer"
+            ));
+        }
+        // Under MRT a velocity inlet below MIN_TAU with a uniform pressure outlet can carry a bounded
+        // plane stress wave (#1005): the deviatoric normal stress crosses the box and reflects off the
+        // outlet, and MRT relaxes it at about ω = 2, so it damps only with the bulk. Measured on
+        // 4-cell and 16-cell boxes, its growth vanishes at τ⁺ 0.5048 and near 0.5015; the convective
+        // outlet does not carry it.
+        if smallest_tau < MIN_TAU
+            && collision == Collision::Mrt
+            && domain.free_surface.is_none()
+            && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Velocity { .. }))
+            && BoxFace::ALL.iter().any(|f| matches!(domain.faces.get(*f), FaceCondition::Pressure { outflow: Outflow::Uniform, .. }))
+        {
+            warnings.push(format!(
+                "τ = {smallest_tau:.4} is below {MIN_TAU}: with a velocity inlet and a uniform pressure outlet, a bounded plane stress wave can appear and persist under the MRT collision; the convective outflow (`outflow: \"convective\"`) on the pressure face avoids it, or a finer spacing or a longer time step"
+            ));
+        }
+        if smallest_tau < REGULARIZED_TAU_LIMIT && collision.is_regularized() {
+            warnings.push(format!(
+                "τ = {smallest_tau:.4} is below {REGULARIZED_TAU_LIMIT}, where even the regularized collision went unstable on a coarse bluff-body grid: the inlet and outlet still reflect pressure waves there; a finer spacing is safer"
             ));
         }
         if collision != Collision::Trt && magic_given {
@@ -1018,6 +1260,7 @@ impl Setup {
             dynamic_sigma,
             smagorinsky,
             vreman,
+            spalart_allmaras,
             van_driest,
             wall_model,
             walls,
@@ -1036,6 +1279,7 @@ impl Setup {
             shear_dependent_tau,
             warnings,
             domain,
+            limits: *limits,
         })
     }
 
@@ -1044,9 +1288,10 @@ impl Setup {
         self.grid.spacing.powi(3) / self.time_step
     }
 
-    /// Whether a subgrid model (Smagorinsky's or Vreman's) gives the cells an eddy viscosity.
+    /// Whether a turbulence model (Smagorinsky's, Vreman's or Spalart–Allmaras) gives the cells
+    /// an eddy viscosity.
     pub fn turbulent(&self) -> bool {
-        self.smagorinsky > 0.0 || self.vreman > 0.0
+        self.smagorinsky > 0.0 || self.vreman > 0.0 || self.spalart_allmaras.is_some()
     }
 
     /// Model units per lattice unit of velocity, pressure and force.

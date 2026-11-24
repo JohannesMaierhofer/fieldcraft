@@ -502,7 +502,22 @@ static ENGLISH_SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
 });
 static ENGLISH: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
     std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("en", "English", ENGLISH_SOURCE.as_str()));
-static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 1]> = std::sync::LazyLock::new(|| [&*ENGLISH]);
+static HEBREW: std::sync::LazyLock<solidcraft_ui_text::Catalog> =
+    std::sync::LazyLock::new(|| solidcraft_ui_text::Catalog::new("he", "עברית", include_str!("../locales/he.json")));
+static MESSAGES: std::sync::LazyLock<[&'static solidcraft_ui_text::Catalog; 2]> = std::sync::LazyLock::new(|| [&*ENGLISH, &*HEBREW]);
+
+/// Noto Sans Hebrew Regular (SIL OFL 1.1, `fonts/NotoSansHebrew-OFL.txt`), embedded on every
+/// platform so Hebrew text draws the same on desktop and web.
+const NOTO_SANS_HEBREW: &[u8] = include_bytes!("../fonts/NotoSansHebrew-Regular.ttf");
+
+/// Add the embedded Hebrew face to `fonts` as the kit's Hebrew fallback, last in every sans family
+/// and in the monospace family.
+fn install_hebrew_fallback(fonts: &mut egui::FontDefinitions) {
+    fonts.font_data.insert(type_face::HEBREW_FALLBACK.to_owned(), std::sync::Arc::new(egui::FontData::from_static(NOTO_SANS_HEBREW)));
+    for family in type_face::sans_families().into_iter().chain(std::iter::once(egui::FontFamily::Monospace)) {
+        fonts.families.entry(family).or_default().push(type_face::HEBREW_FALLBACK.to_owned());
+    }
+}
 
 /// SolidCraft's look installed into the kit, once per process: FieldCraft's icon set (SolidCraft's
 /// with ours, [`crate::icons::SET`]), SolidCraft's code-drawn glyphs and its built-in themes, and
@@ -516,14 +531,17 @@ pub fn install_look() {
 
 /// Style the context for the dark or light theme: SolidCraft's look installed in the kit, with
 /// FieldCraft's tokens (its teal accent on SolidCraft's chrome) and teal icon accents; the kit's
-/// visuals from them, and SolidCraft's interface faces (IBM Plex). egui draws selected labels'
-/// text and links in the accent's ink, which reads on the selection fill and on panels.
+/// visuals from them, and SolidCraft's interface faces (IBM Plex) plus Hebrew font fallback. egui
+/// draws selected labels' text and links in the accent's ink, which reads on the selection fill and
+/// on panels.
 pub fn apply(ctx: &egui::Context, dark: bool) {
     install_look();
     kit_theme::set_dark(dark);
     kit_theme::set_custom(Some(kit_theme::Custom { dark, tokens: kit(dark) }));
     kit_icons::set_theme_palette(Some((dark, icon_palette(dark))));
-    solidcraft_look::fonts::install(ctx);
+    let mut fonts = solidcraft_look::fonts::definitions();
+    install_hebrew_fallback(&mut fonts);
+    solidcraft_look::fonts::apply(ctx, fonts);
     kit_theme::apply(ctx);
     let (k, ink) = (kit(dark), Tokens::get(dark).accent_ink);
     ctx.global_style_mut(|s| {
@@ -615,7 +633,11 @@ mod tests {
             ])
             .output()
             .expect("cargo metadata runs");
-        assert!(out.status.success(), "cargo metadata: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "cargo metadata --offline needs every locked package downloaded: run `cargo fetch --locked` first ({})",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let metadata: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata is JSON");
         // The kit's widgets and the theme's settings (colour vision) both read FieldCraft's catalogue.
         let mut dirs: Vec<std::path::PathBuf> = ["solidcraft-ui-kit", "solidcraft-theme"]
@@ -683,6 +705,20 @@ mod tests {
         run(&ctx);
         assert_eq!(label_font(&ctx, 12.0), type_face::semibold(12.0));
         run(&ctx);
+    }
+
+    /// Applying the theme registers the embedded Hebrew face: Hebrew draws with a glyph, never a box.
+    #[test]
+    fn embedded_hebrew_font_has_hebrew_glyphs() {
+        let ctx = egui::Context::default();
+        apply(&ctx, false);
+        // Fonts take effect from the next frame.
+        for _ in 0..2 {
+            ctx.run_ui(egui::RawInput::default(), |_ui| {}).textures_delta.clear();
+        }
+        for c in 'א'..='ת' {
+            assert!(ctx.fonts_mut(|f| f.has_glyph(&egui::FontId::proportional(14.0), c)), "no glyph for {c}");
+        }
     }
 
     /// The kit draws with FieldCraft's colours once they are applied: its tokens are [`kit`]'s,

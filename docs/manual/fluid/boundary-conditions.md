@@ -3,17 +3,18 @@
 Each of the six faces of a fluid domain's box carries a condition: a no-slip wall, a moving or slip
 wall, a velocity inlet, a pressure outlet, or one of a periodic pair. Obstacle faces are no-slip
 walls, at rest or moving tangentially. Walls are halfway bounce-back, or, on obstacles and when the
-step asks for it, interpolated bounce-back where the surface crosses each link; velocity inlets use Zou–He,
-with a convective outflow for outlets that a wake reaches, and the force the fluid exerts on every
+step asks for it, interpolated bounce-back where the surface crosses each link; velocity inlets use Zou–He
+(corrected under TRT), with a convective outflow for outlets that a wake reaches and a characteristic,
+partially non-reflecting outflow for outlets that pressure waves reach, and the force the fluid exerts on every
 wall is measured by momentum exchange.
 
 | | |
 |---|---|
 | **Commands** | `model.fluid_domain.create` (`faces`, `surfaces`), `model.fluid_domain.edit`, `model.fluid_domain.boundary` |
 | **Step procedure** | `"fluid"` |
-| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every condition, interpolated walls included |
-| **Method** | Halfway bounce-back with Ladd's moving-wall term (Ladd 1994); interpolated bounce-back at obstacles (Bouzidi, Firdaouss & Lallemand 2001); Zou & He (1997) with Hecht & Harting's D3Q19 transverse correction; convective outflow (Orlanski 1976); momentum exchange (Ladd 1994; Mei et al. 2002) |
-| **Verified by** | `crates/lbm/tests/verification.rs`, `outlets.rs`, `interpolated.rs`, `interpolated_couette.rs`; `crates/lbm-gpu/tests/verification.rs` |
+| **Solver** | `crates/lbm` (CPU, f64); `crates/lbm-gpu` (f32), every condition, interpolated walls included, except the characteristic outflow (CPU only) |
+| **Method** | Halfway bounce-back with Ladd's moving-wall term (Ladd 1994); interpolated bounce-back at obstacles (Bouzidi, Firdaouss & Lallemand 2001); Zou & He (1997) with Hecht & Harting's D3Q19 transverse correction; convective outflow (Orlanski 1976); characteristic outflow (Poinsot & Lele 1992; Rudy & Strikwerda 1980 for σ; Selle, Nicoud & Poinsot 2004 for its reflection; Guo, Zheng & Shi 2002); momentum exchange (Ladd 1994; Mei et al. 2002) |
+| **Verified by** | `crates/lbm/tests/verification.rs`, `outlets.rs`, `characteristic.rs`, `interpolated.rs`, `interpolated_couette.rs`; `crates/lbm-gpu/tests/verification.rs`; oracle case [`characteristic-outlet-reflection`](../../../tests/oracle/characteristic-outlet-reflection/) |
 
 ## Synopsis
 
@@ -25,6 +26,11 @@ wall is measured by momentum exchange.
 ```json
 {"command": "model.fluid_domain.boundary", "params": {"domain": "Flow", "at": "x_max",
   "condition": {"type": "pressure", "pressure": 0, "outflow": "convective"}}}
+```
+
+```json
+{"command": "model.fluid_domain.boundary", "params": {"domain": "Flow", "at": "x_max",
+  "condition": {"type": "pressure", "pressure": 0, "outflow": "characteristic", "sigma": 0.25}}}
 ```
 
 ```json
@@ -45,8 +51,9 @@ wall is measured by momentum exchange.
 | `wall` | — | box, obstacle | No-slip wall at rest. Every box face and every obstacle face is one unless given. |
 | `moving_wall` | `velocity: [u, v, w]` | box, obstacle | No-slip wall sliding with this velocity. On a box face the normal component must be 0. On an obstacle face it is the tangential motion of a rotating or sliding surface; the body does not move. |
 | `slip` | — | box | Frictionless wall: no flow through it, no shear. |
-| `velocity` | `velocity: [u, v, w]`, `profile: "uniform" \| "parabolic"` (default uniform) | box | Velocity inlet, or outlet if the velocity points out of the box. `parabolic` multiplies the velocity by 4 s (1 − s) across each direction of the face that ends at walls (not periodic), s from 0 to 1 across the box: fully developed flow between plates (one such direction), or in a rectangular duct approximated by the product (two). The given velocity is the peak. |
-| `pressure` | `pressure: p` (gauge), `outflow: "uniform" \| "convective"` (default uniform) | box | Pressure outlet (or inlet). `uniform`: the face at the pressure, the flow crossing it normally. `convective`: each cell at the pressure, the flow leaving as it arrives; for outlets a wake or vortices reach. |
+| `symmetry` | — | box | Symmetry plane of a half model: the flow of a slip face, and no heat through it, in the fluid and in every conducting solid it cuts. Setting it makes the face's thermal condition adiabatic; a held temperature or flux on it is refused. |
+| `velocity` | `velocity: [u, v, w]`, `profile: "uniform" \| "parabolic"` (default uniform) | box | Velocity inlet, or outlet if the velocity points out of the box. `parabolic` multiplies the velocity by 4 s (1 − s) across each direction of the face that ends at walls (not periodic), s from 0 to 1 across the box: fully developed flow between plates (one such direction), or in a rectangular duct approximated by the product (two). The given velocity is the peak. A direction that ends at a symmetry plane is the half of the whole model's: the profile peaks at the plane. |
+| `pressure` | `pressure: p` (gauge), `outflow: "uniform" \| "convective" \| "characteristic"` (default uniform), `sigma` (characteristic only, above 0 and at most 1, default 0.25) | box | Pressure outlet (or inlet). `uniform`: the face at the pressure, the flow crossing it normally. `convective`: each cell at the pressure, the flow leaving as it arrives; for outlets a wake or vortices reach. `characteristic`: as uniform, but partially non-reflecting: an outgoing pressure wave leaves instead of coming back, while the face's pressure relaxes towards `p` at a rate set by `sigma` ([Characteristic outlets](#characteristic-outlets)). One face at most, CPU only, no checkpoints; `sigma` with another outflow is refused. |
 | `periodic` | — | box | What leaves through this face enters through the opposite one, which must be periodic too. |
 
 Obstacle faces take only `wall` and `moving_wall`; setting `wall` removes the face's entry, walls
@@ -55,7 +62,7 @@ each obstacle face has at most one condition. A box face that is an inlet or out
 2 cells across it.
 
 Where the obstacle walls lie is set on the fluid step, beside the collision: `walls` in the
-`"fluid"` procedure of `model.step.create` is `"halfway"` (the default) or `"interpolated"`.
+`"fluid"` procedure of `model.step.create` is `"halfway"` (the default), `"interpolated"` or `"interpolated_quadratic"`.
 
 ```json
 {"command": "model.step.create", "params": {"name": "Run", "procedure": {"type": "fluid",
@@ -66,6 +73,7 @@ Where the obstacle walls lie is set on the fluid step, beside the collision: `wa
 |---|---|---|
 | `"halfway"` | Halfway between the fluid cell and the solid one: a staircase of cell faces. Mass conservative. | Bodies whose faces lie on cell faces (boxes aligned with the grid), and flows where a fraction of a cell in wall position does not matter. |
 | `"interpolated"` | Where the obstacle's surface crosses each link (below). Not mass conservative. | Curved bodies (cylinders, spheres, pipes, fins) and bodies that do not sit on the grid, when drag, pressure drop or the velocity near the wall matter on a grid you can afford. Keep τ⁺ at 1 or below (the automatic time step does). |
+| `"interpolated_quadratic"` | The same crossings, with the quadratic form below where the flow has three nodes in line. Not mass conservative. On the CPU and the GPU. | The same bodies when the wall is turned against the grid and the flow rate or wall shear matters: on a Poiseuille channel at 26.57° or 45° to the grid, 8 cells across, the velocity's L2 error is 1.1e-3 to 7.0e-3 against the linear form's 6.5e-3 to 1.6e-2, and the flow rate is within 0.76 % against 1.36 %. |
 
 The box's own faces are halfway with either setting: they lie halfway along their links already.
 Interpolated walls are refused with a wall model (`turbulence.wall_model`) and with a free surface,
@@ -127,6 +135,21 @@ keeps halfway bounce-back; so does a link on which no crossing is found. The sol
 warns: "interpolated walls: N of M wall links kept halfway bounce-back (…)". Refine the spacing
 where obstacles nearly touch.
 
+**Quadratic form.** With `"interpolated_quadratic"` the same characteristic is read from three nodes
+in line (Lagrange interpolation; the coefficients sum to one and both lines are halfway bounce-back
+at q = ½). With x_ff = x_f + c_q and x_fff = x_f + 2c_q:
+
+```text
+q < ½:  f_q(x_f) = q(1 + 2q) f*_q̄(x_f) + (1 − 4q²) f*_q̄(x_ff) − q(1 − 2q) f*_q̄(x_fff)
+q ≥ ½:  f_q(x_f) = f*_q̄(x_f) / (q(2q + 1)) + (2q − 1)/q · f*_q(x_f) − (2q − 1)/(2q + 1) · f*_q(x_ff)
+```
+
+A link on a moving wall (the quadratic form has no moving-wall term), or whose nodes in line are
+not all fluid, keeps the linear form. The reply's `wall_links` counts the links that took the
+quadratic form (`quadratic`) and those that kept the linear one (`linear_moving_wall`,
+`linear_too_few_nodes`), and the solve warns: "quadratic interpolated walls: N of M interpolated
+wall links kept the linear form (…)". (The quadratic interpolation of Bouzidi et al. 2001, checked here against the continuity at q = ½ and a parabola.)
+
 **Mass.** The populations an interpolated wall sends back no longer sum to those it received, so
 the fluid's mass drifts. In the verification cases below the drift is 10⁻¹⁰ to 10⁻⁷ of the mass
 over a run; `mass.relative_change` in the reply shows it for yours.
@@ -150,6 +173,56 @@ component of c_q reversed). Where a link crosses more than one face (an edge or 
 mirror source is not a fluid cell, the slip face bounces back instead. A slip face takes normal
 momentum only.
 
+### Symmetry planes
+
+A symmetry plane solves half of a model that is symmetric about a box face. To the flow it is a slip
+face, with one difference: where the mirror source of a reflected population is an obstacle cell (a
+body the plane cuts), the population bounces back off the obstacle's mirror image and its momentum
+is the obstacle's, as in the whole model. No heat crosses it: the fluid's populations bounce back
+(adiabatic), and a conducting solid's cell on the plane faces its own mirror image, at its own
+temperature. That face still counts in the solid's explicit stability limit, so the half sub-steps
+as the whole does and the transient matches too. A parabolic inlet treats the plane as the middle of
+its profile.
+
+Enter the whole model's inputs. A conducting solid, fan or porous zone that reaches the plane is
+half of one body or zone of the whole model, continued across the plane as its mirror image. That
+holds whether its geometry ends at the plane (the usual half model, with the body cut there) or
+reaches past it. Whether a part reaches the plane is decided from its geometry against the plane's
+coordinate, never from the cells it falls in: a fan or solid that stops a fraction of a cell short
+of the plane is clear of it, even when its last cell layer is on the plane. Its power or curve is
+that whole body's or fan's:
+
+- **A powered solid** spreads its power over its cells and their mirror images, so the half generates
+  half of it (a quarter in the corner of a quarter model).
+- **A fan** reads its curve at the whole fan's flow, twice its flow in the box.
+- **A solid, fan or zone clear of every plane** keeps all of its power or curve, because its mirror
+  image is a second one.
+
+The whole-model cell count follows from the box (the cells in it over the share), so no extra
+grid is built. The reply states the share: `solids[].power` is the power generated in the box,
+with `power_share` (½ per plane reached) beside it, and a fan or zone carries `share`.
+
+Every input that crosses the plane breaks the symmetry, and the model check, the boundary command's
+reply and the solve's `warnings` name each one: a body acceleration, buoyancy gravity or initial
+velocity with a component normal to the plane; a velocity inlet or moving wall on another face whose
+velocity crosses it; a fan the plane cuts that blows through it or is cut off its middle. A fan
+that blows toward the plane without reaching it is fine: its mirror image is a second fan blowing the
+other way. The solve's setup also warns about an obstacle the plane cuts off its middle, whose
+extent across the plane is not symmetric about it. The half model solves the obstacle's part in the
+box and that part's mirror image, so the result is not the obstacle's. Only the obstacle's
+bounding box is checked, so an asymmetric shape with a symmetric extent passes. An obstacle that
+ends at the plane is the half the model is meant to solve and gets no warning.
+
+`solve.fluid` adds `whole_model` to its reply: the totals of the whole symmetric model, `factor`
+(2 per plane) times this one, clearly labelled. These are every wall's force (its components
+along the planes times the factor, its component normal to a plane zero, because the mirror images
+cancel), every wall's heat, each conducting solid's power and heat to the fluid, and each fan's or
+porous zone's flow. Each entry keeps its name in this model but stands for it and its mirror
+images together: the box face opposite a plane, for instance, is that wall and its image across the
+plane, two walls of the whole model, its heat summed over both and its normal force zero because the
+two cancel. The planes' own faces are inside the whole model and are left out. There is no
+whole model when both faces of an axis are planes (an unbounded strip).
+
 ### Periodic faces
 
 A link that leaves through a periodic face pulls from the periodic image on the opposite face.
@@ -172,6 +245,65 @@ entering from outside: one along the normal, four diagonals) are set after strea
    non-equilibrium part): f_q = f_q̄ + 6 w_q ρ c_q·u.
 4. The transverse momentum is corrected on the two diagonal unknowns of each tangential axis, as
    Hecht & Harting (2010) do for D3Q19.
+
+For a TRT velocity inlet without a free surface and with two inner fluid cells, a correction removes the
+alternating inlet mode seen near τ = 1/2 (#820). The non-equilibrium stress trace is
+extrapolated as `2 trace(inner1) − trace(inner2)`. The five deviatoric stress components
+and the prescribed velocity are preserved. Density receives only the high-frequency part
+of the extrapolation residual:
+
+```text
+δρ = (I − S₁ S₂) [2ρ(inner1) − ρ(inner2) − ρ(Zou–He)]
+S = [−1, 4, 10, 4, −1] / 16 along each tangential axis
+δf_q = f_eq(q, δρ, u_bare) + (3/2) w_q (|c_q|² − 1) δtrace
+```
+
+The filter wraps periodic sides and reflects at wall sides; missing or differently owned
+open-face neighbours use the centre. Without two inner fluid cells, or at a velocity face
+pointing outward, the original reconstruction is retained. Free-surface flows also retain their original closure:
+a moving liquid/gas interface does not provide two fixed inner fluid samples. The correction reads a snapshot
+of streamed populations before any open face is changed. It changes neither the bulk TRT
+collision nor SGS viscosity, and the other collision operators retain their inlet closure.
+This correction is FieldCraft's own: it is not a published inflow condition. It takes the
+equilibrium/non-equilibrium split of non-equilibrium extrapolation (Guo, Zheng & Shi 2002,
+[doi:10.1088/1009-1963/11/4/310](https://doi.org/10.1088/1009-1963/11/4/310)) and
+Shapiro's selective filter (1970,
+[doi:10.1029/RG008i002p00359](https://doi.org/10.1029/RG008i002p00359)), and combines them
+in a way neither paper describes. Published closures were tried on the same box first:
+full non-equilibrium extrapolation, the regularised inlet of Latt et al. (2008,
+[doi:10.1103/PhysRevE.77.056703](https://doi.org/10.1103/PhysRevE.77.056703)), an
+equilibrium inlet, and a characteristic (LODI) inlet density after Izquierdo & Fueyo (2008,
+[doi:10.1103/PhysRevE.78.046707](https://doi.org/10.1103/PhysRevE.78.046707)) and Heubes,
+Bartel & Ehrhardt (2014, [doi:10.1016/j.cam.2013.09.019](https://doi.org/10.1016/j.cam.2013.09.019)).
+At τ = 0.5005 each either went unstable or left disturbances far above the 1e-6 seed (below).
+
+The 16³, U=0.05, τ=0.505 checkerboard reproduction that failed at step 2838 completes
+30,000 steps with density departure about 8e-9. Broadband disturbances and τ=0.507 and
+0.518 are also checked. **No stable inlet result was obtained in the tested cases below
+τ = 0.505 at this Mach number**, and the
+setup warns about it (only a turbulence model allows τ below 0.505):
+
+- The bulk is itself the first limit. Linearised about the uniform stream at U = 0.05
+  (Mach 0.087), with the default Λ = 3/16 the TRT collision has growing modes on the 16³ box
+  for τ ≤ 0.502 (1.96e-3 per step at τ = 0.5005) and none from 0.5025; at τ = 0.5005 it is
+  stable only up to U = 0.01. The analysis is the von Neumann one of Sterling & Chen (1996)
+  and Wissocq, Sagaut & Boussuge (2019,
+  [doi:10.1016/j.jcp.2018.12.015](https://doi.org/10.1016/j.jcp.2018.12.015)), who trace
+  BGK's instability to collisions of non-hydrodynamic with physical modes, worst for oblique
+  waves; Lallemand & Luo (2000) find BGK unstable above V ≈ 0.07 already at τ ≈ 0.5025.
+  Λ = 3/16 at τ = 0.5005 makes τ⁻ ≈ 375, odd moments that hardly relax; the stable MRT of
+  Lallemand & Luo relaxes them fast. The test `tests/trt_stability.rs` keeps these numbers.
+- A near-BGK Λ (≤ 3e-5, τ⁻ ≤ 0.56) makes the bulk stable at τ = 0.5005, but moves the
+  bounce-back wall: the effective channel width is √(H² + (16Λ − 3)/3) (Ginzburg,
+  Verhaeghe & d'Humières 2008,
+  [doi:10.4208/cicp.2008.v3.p519](https://doi.org/10.4208/cicp.2008.v3.p519), from Eq. 2.29),
+  for a channel of H cells, exact only at Λ = 3/16. With it no inlet closure above held either: Zou–He and this
+  correction fail within 150 steps, the others fail or keep departures of 1e-3 to 1e-2.
+- Where the bulk is stable but τ < 0.505 (τ = 0.5005 at U = 0.01; τ = 0.5025–0.503 at
+  U = 0.05) this inlet still fails or keeps departures of 5e-3 and more: its own floor is
+  between 0.503 and 0.505 at Mach 0.087.
+
+This inlet repair is not a validation of high-Reynolds-number LES or drag.
 
 A uniform pressure face uses non-equilibrium extrapolation (Guo, Zheng & Shi 2002):
 its density is prescribed, physical tangential velocity is zero, and normal velocity is taken
@@ -217,6 +349,38 @@ normal and tangential, comes from the flow.
 fallback: Zou–He at the face's density, no tangential velocity, which stays stable with reversed
 outlet cells. The rule changes only the outlet cells' streamed populations, so it does not depend
 on the collision operator.
+
+### Characteristic outlets
+
+A uniform pressure outlet holds the face's density, so an outgoing pressure wave is reflected almost
+whole: after an impulsive start the box's acoustic mode rings between inlet and outlet until
+viscosity removes it. A characteristic outlet lets each outlet cell carry its own density ρ_b and
+outward normal velocity u_b, advanced every step after streaming by the linearised one-dimensional
+characteristic (LODI) balance of Poinsot & Lele (1992) in density units (p = c_s² ρ), with ρ₁, u₁
+the inner cell's state and ρ₀ the face's density:
+
+```text
+L₅ = (u_b + c_s) [(ρ_b − ρ₁) + (ρ₀ / c_s)(u_b − u₁)]    the outgoing wave, one-sided from the inner cell
+L₁ = K (ρ_b − ρ₀),   K = σ c_s / L                      the incoming wave: only the pressure's relaxation
+ρ_b ← ρ_b − ½ (L₅ + L₁),   u_b ← u_b − (c_s / 2ρ₀)(L₅ − L₁)
+```
+
+with u_b + c_s limited to [0, 1] cells per step, L the box's extent along the face's normal, in
+cells, and σ = 0.25 by default (after Rudy & Strikwerda 1980). ρ₁ and u₁ are read
+as the closure reads them: u₁ is the inner cell's physical velocity, with a fan's, a porous zone's
+or a mushy cell's action included. The cell then takes the equilibrium at (ρ_b, u_b), with no
+tangential velocity, plus the inner cell's non-equilibrium part (Guo, Zheng & Shi 2002): the
+uniform outlet's own closure, at a density and velocity that move.
+
+The relaxation reflects R(ω) = −1 / (1 − 2iω/K) of a normal wave of angular frequency ω (radians
+per step), so |R| = K / √(K² + 4ω²) (Selle, Nicoud & Poinsot 2004): in time, a one-pole low-pass of
+rate K/2 applied to the wave a fully reflecting end returns. Slow waves come back, fast ones leave;
+σ trades how much of the slow waves come back against how far the mean pressure drifts from `p`
+and how fast it returns. Besides the relaxation, the closure itself reflects a little: 0.23 % of an
+incident pulse's peak at σ 0.25, 0.5 and 1.0 (oracle case [`characteristic-outlet-reflection`](../../../tests/oracle/characteristic-outlet-reflection/)). A cell
+counts the steps its balance went non-finite or non-positive and kept its last state, and the
+steps it had no fluid cell inside it (an obstacle in the outlet's inner layer), when it takes the
+local closure at `p` and reflects; the solve warns when any did.
 
 ### Wall forces: momentum exchange
 
@@ -272,8 +436,9 @@ walls' complete histories ([Fluid results](fluid-results.md)). Forces are in the
 sign is the force of the fluid on the wall.
 
 With interpolated walls the reply's `wall_links` counts the obstacle links: `interpolated`,
-`halfway_no_second_node` (q < ½ with no fluid cell behind) and `halfway_no_crossing`; it is
-`null` with halfway walls.
+`halfway_no_second_node` (q < ½ with no fluid cell behind) and `halfway_no_crossing`, and with
+quadratic walls `quadratic`, `linear_moving_wall` and `linear_too_few_nodes`; it is `null` with
+halfway walls.
 
 ## Worked example
 
@@ -359,6 +524,7 @@ the closed form.
 | Sphere array, periodic | Wall force = driving force at steady state | | 10⁻³ | `stokes_drag_of_a_sphere_array_matches_hasimoto` (heavy) |
 | Pipe, 4/6/8/12/16 cells per radius, halfway and interpolated walls, τ = 1 | Hagen–Poiseuille (theory) | L2 halfway 4.5e-2 … 9.5e-3 (fitted order 1.01), interpolated 6.6e-3 … 6.9e-4 (order 1.65); wall force = driving force | interpolated order > 1.5, halfway < 1.3; interpolated below 0.3 × halfway on every grid | `a_coarse_pipe_is_closer_with_interpolated_walls` (8 cells); the order studies `pipe_poiseuille_converges_at_second_order_with_interpolated_walls` and, up to 32 cells, `pipe_poiseuille_orders_on_eight_grids` (both heavy) |
 | Plane channel, walls 0, 0.2, 0.4, 0.6, 0.8 of a cell off the cell faces, 8/16/32 cells | The parabola (theory; Bouzidi et al.'s test) | Worst over the shifts: halfway 0.185, 0.096, 0.049 of the peak (order 0.95); interpolated 0.039, 0.0099, 0.0025 (order 1.99); both exact at shift 0 | interpolated orders > 1.8, halfway < 1.2 | `a_channel_with_walls_anywhere_in_a_cell_keeps_its_parabola` |
+| Plane channel turned 26.57° (2:1) and 45° (1:1) against the grid, three wall offsets each, 8/12/16/24 cells across, the same physical offset on each grid, quadratic walls | The parabola (theory); both of Bouzidi et al.'s interpolations second order | Velocity L2 error, fitted order: 26.57° 1.98, 2.76, 2.24; 45° 2.03 at offset 0.5; 45° at offsets 0 and 0.25 0.30 and 0.57 (the linear form 0.75 and 1.80), recorded as known misses: at offset 0 a wall through cell centres leaves 168 and 172 links without a crossing on 12 and 24 cells; at offset 0.25 the 24-cell error rises, cause not found yet | order > 1.5 | `the_quadratic_rule_on_a_turned_channel_converges_at_second_order` (heavy) |
 | Annular Couette: rod of radius ½ sliding along the axis of a pipe of radius 1, 6/8/12/16 cells per radius, τ = 1 | u = U ln(r/R₂)/ln(R₁/R₂); rod drag 2πμUL/ln(R₂/R₁) (theory) | L2 halfway 8.4e-2 … 3.4e-2 (order 1.02), interpolated 7.3e-3 … 1.1e-3 (order 1.98); rod drag halfway +1.5 … +14 %, interpolated within 0.11 %; the two walls' forces balance to 2e-7 | interpolated order > 1.6, halfway < 1.3; drag within 0.5 % | `a_sliding_rod_on_eight_cells_per_radius_is_closer_with_interpolated_walls`; the order studies `annular_couette_with_a_sliding_rod_converges_at_second_order_with_interpolated_walls` and, to 48 cells, `annular_couette_orders_on_seven_grids` (both heavy; 6–48 cells: orders 1.16 and 1.92) |
 | Sphere array, R = 3 cells in 16³ (#798), τ = 1 | Hasimoto (1959) with Sangani & Acrivos (1982) (theory) | K halfway +11.66 %, interpolated −1.64 % | halfway > 11 %, interpolated within 2 % | `stokes_drag_of_a_coarse_sphere_array_with_interpolated_walls` (heavy) |
 | Sphere array, R = 3, 6, 9 cells (16³, 32³, 48³), τ = 1 | The same | K halfway +11.7 %, +1.7 %, +2.3 % (not monotone); interpolated −1.64 %, −0.85 %, −0.32 % | interpolated within 2 % and closer at every refinement | `stokes_drag_of_a_sphere_array_with_interpolated_walls_over_radii_and_tau` (heavy, with the τ sweep above) |
@@ -378,7 +544,17 @@ the closed form.
 | The same run 20 s (60 000 steps) | Stable, mass bounded | | | `a_convective_outlet_stays_stable_with_backflow_for_long` (heavy) |
 | Schäfer–Turek 2D-2 (Re 100), convective outlet at 7.5 D and 21 D, D/Δx 20 | c_D,max 3.22–3.24, c_L,max 0.99–1.01, St 0.295–0.305 (benchmark) | 7.5 D: 3.356, 1.072, 0.2989; 21 D: 3.446, 1.102, 0.2984 | the two within 4 %; c_D 8 %, c_L 12 %, St 2 % of the benchmark | `schafer_turek_2d2_does_not_depend_on_the_outlet_distance` (heavy) |
 | Coarse 2D-2, D/Δx 10, τ = 0.51 | Uniform outlet diverges (step 6699), convective runs 24 000 steps | St within 2 % of 0.30 | 2 % | `a_coarse_cylinder_at_re_100_runs_with_a_convective_outlet_where_the_uniform_one_diverges` (heavy) |
-| Every condition on the GPU | The CPU | | [GPU backend](gpu.md) | `zou_he_channel_matches_the_cpu`, `convective_outlet_matches_the_cpu_with_a_vortex_and_backflow`, `edges_of_two_pressure_faces_match_the_cpu`, `couette_wall_forces_match_the_cpu` |
+| A uniform stream through a characteristic outlet | The uniform outlet's run | | density and velocity 10⁻¹³ | `the_characteristic_outlet_keeps_a_uniform_stream` |
+| A box's acoustic mode, 64 × 4 × 4 cells, characteristic outlet (σ 0.25) | The uniform outlet reflects it | Density RMS after 2000 steps 2.17e-8 against 4.20e-4 | below a hundredth | `the_characteristic_outlet_lets_the_box_s_acoustic_mode_out` |
+| A plane pulse in a 2048-cell duct (σ 1.0 and 0.25), the reflection in time | The one-pole response of rate K/2 to the uniform outlet's reflection (Selle, Nicoud & Poinsot 2004) | Largest departure 2.28e-3 of the incident peak at both; tail rate over K/2 1.0005 (σ 1.0), 1.0054 (σ 0.25); uniform outlet 0.9928 | departure 4e-3; rate 0.5 % (σ 1.0), 2 % (σ 0.25); control 1 % | oracle case [`characteristic-outlet-reflection`](../../../tests/oracle/characteristic-outlet-reflection/) |
+| A stream through a porous zone ending at the characteristic outlet's inner cell | The steady balance u_b = u₁ + c_s (ρ₁ − ρ₀) / ρ₀ with u₁ the closure's inner velocity | 6e-16 | 10⁻⁹ | `the_characteristic_outlet_reads_the_inner_velocity_of_a_porous_zone` |
+| The same box started from rest through `solve.fluid`, `outflow: "characteristic"` | The uniform outlet reflects the start-up wave | Largest pressure RMS over the last quarter (steps 1500–2000) 4.11e-4 Pa against 2.50e-2 Pa | below a twentieth | `a_characteristic_outlet_is_set_by_command_and_lets_the_start_up_wave_out` (`crates/engine`) |
+| Heated channel, a powered conducting block across the middle: the lower half with a symmetry plane through the block, given the block's whole power, against the whole | The whole channel | velocity 3.6e-15 of the peak, temperature 1.0e-15 of the rise, 2 × half drag and the floor heat equal to 7 digits | 1e-12 | `a_half_channel_with_a_symmetry_plane_is_half_the_whole` |
+| The same half with a slip roof, its parabola ending at the roof | The whole channel | velocity 35 % off | must miss | (same test) |
+| A fan loop driven by a fan across the channel: the lower half with a symmetry plane through the fan, given the whole fan's curve, against the whole | The whole loop | 2 × half flow and the pressure rise equal to 7 digits, velocity 3e-16 | 1e-12 | `a_fan_cut_by_a_symmetry_plane_runs_on_the_whole_fans_curve` |
+| The heated channel's half with the block a quarter cell short of the plane (its last cell layer on the plane), given its power | The whole channel with the block and its mirror image, each given that power | velocity 1.7e-16, temperature 6.5e-16 of the rise; `power_share` 1 | 1e-12 | `a_powered_solid_short_of_a_symmetry_plane_keeps_its_power` |
+| The fan loop's half with the fan a quarter cell short of the plane | The whole loop with the fan and its mirror image as two fans | flow and pressure rise each fan's to 7 digits, velocity 3e-16; `share` 1 | 1e-12 | `a_fan_short_of_a_symmetry_plane_mirrors_into_a_second_fan` |
+| Every condition on the GPU | The CPU | | [GPU backend](gpu.md) | `zou_he_channel_matches_the_cpu`, `convective_outlet_matches_the_cpu_with_a_vortex_and_backflow`, `edges_of_two_pressure_faces_match_the_cpu`, `couette_wall_forces_match_the_cpu`, `a_half_channel_on_a_symmetry_plane_matches_the_cpu` |
 | Interpolated walls on the GPU: a radius-6 sphere in a periodic 24³ box, 300 steps, every collision, at rest and moving | The CPU | velocity ≤ 6.5e-6 of the peak, density ≤ 1.1e-7, skin force ≤ 4.7e-6 at rest and ≤ 1.3e-5 moving (Apple M4 Max) | 2e-5, 1e-6, 5e-5 | `interpolated_walls_match_the_cpu_fields_and_forces`, `halfway_walls_stay_halfway_on_the_gpu` |
 
 The 20-cell staircase cylinder puts c_D,max 4–7 % and c_L,max 7–10 % above the 2D-2 benchmark (2D-1 at
@@ -393,11 +569,23 @@ this resolution: c_D 3.4 % above).
   verification cases run the two-relaxation-time one.
 - The temperature lattice and conducting solids keep halfway walls with either setting.
 - Obstacles do not move: a moving wall is tangential motion of a fixed surface.
-- Slip faces are box faces only; obstacle faces take walls and moving walls.
+- Slip faces and symmetry planes are box faces only; obstacle faces take walls and moving walls.
+- A symmetry plane's results are those of the half: they are not mirrored for display yet, and only
+  the reply's `whole_model` totals stand for the whole model.
 - A uniform pressure outlet distorts the last cell layer where an unrecovered wake reaches it. The
   reported speed extremes (`max_speed`, slice ranges) leave every inlet and outlet layer out for
   this reason, convective outlets included.
-- Inlets and outlets reflect pressure waves; there are no absorbing layers.
+- Inlets and outlets reflect pressure waves; there are no absorbing layers. The characteristic
+  outlet is partially non-reflecting, not non-reflecting: its balance is one-dimensional along the
+  face's normal (oblique waves and vortices crossing it were not measured); through its pressure
+  relaxation it reflects waves slower than about K / 2, |R| = K / √(K² + 4ω²); and its closure
+  reflects directly about 0.23 % of an incident pulse's peak at the three measured σ values. Its |R| inside the relaxation
+  band (ω ≈ K/4 to 4K) was not measured: this pulse experiment cannot resolve it before the inlet reflection returns,
+  so the oracle case checks the same one-pole response in time instead. It goes on one face at
+  most and steps on the CPU only, without checkpoints (refused before the solve starts).
+- Where the flow comes back in through a characteristic outlet (u_b < 0), the cell keeps the
+  outflow treatment: a subsonic inflow needs more prescribed waves (Poinsot & Lele 1992), which it
+  does not have. A convective outlet holds reversed cells instead.
 - Fans and porous zones must stay at least one cell inside the inlet and outlet layers.
 
 ## Implementation
@@ -407,7 +595,9 @@ this resolution: c_D 3.4 % above).
 | `crates/model/src/fluids.rs` | `FaceCondition`, `Profile`, `Outflow`, `SurfaceCondition`, `FluidDomain::set_boundary`, validation. |
 | `crates/lbm/src/lattice.rs` | `moving_wall`: Ladd's term. |
 | `crates/lbm/src/flow.rs` | `Rule`, `Link`, `Interpolation`, `bouzidi`, `WallLinks`, `OpenCell`, `Target`; `Flow::new` (links and open cells), `stream` (rules, momentum exchange), `open_boundaries`, `zou_he`, `hold_equilibrium`, `thermal_rule`. |
-| `crates/lbm/src/outlet.rs` | `Outlets::convect`, `record`, `unknowns`, `backflow`. |
+| `crates/lbm/src/outlet.rs` | `Outlets::convect`, `record`, `unknowns`, `backflow`; `pressure_closure` (both pressure closures); `Characteristic::advance` (the LODI balance per outlet cell). |
+| `crates/lbm/src/flow.rs` (characteristic) | `Flow::characteristic_outlet`, `advance_characteristic`, `inner_cell` (the inner cell's state both closures read). |
+| `crates/lbm/src/reflection.rs` | `outlet_reflection`: the plane-pulse duct (`solve.outlet_reflection`). |
 | `crates/model/src/steps.rs` | `WallTreatment` (`walls` on the fluid step). |
 | `crates/lbm/src/voxel.rs` | `TriangleTree::nearest`: the face of each wall link; `link_fraction`, `TriangleTree::crossing`: where the surface crosses a link. |
 | `crates/engine/src/cmd/define.rs` | `model.fluid_domain.boundary`. |
@@ -426,6 +616,9 @@ this resolution: c_D 3.4 % above).
 - I. Orlanski. *A simple boundary condition for unbounded hyperbolic flows.* J. Comput. Phys. 21(3):251–269, 1976.
 - Q. Lou, Z. Guo, B. Shi. *Evaluation of outflow boundary conditions for two-phase lattice Boltzmann equation.* Phys. Rev. E 87:063301, 2013.
 - Z. Yang. *Lattice Boltzmann outflow treatments: convective conditions and others.* Comput. Math. Appl. 65(2):160–171, 2013.
+- T. J. Poinsot, S. K. Lele. *Boundary conditions for direct simulations of compressible viscous flows.* J. Comput. Phys. 101:104–129, 1992. doi:[10.1016/0021-9991(92)90046-2](https://doi.org/10.1016/0021-9991(92)90046-2)
+- L. Selle, F. Nicoud, T. Poinsot. *Actual impedance of nonreflecting boundary conditions: implications for computation of resonators.* AIAA J. 42(5):958–964, 2004.
+- D. H. Rudy, J. C. Strikwerda. *A nonreflecting outflow boundary condition for subsonic Navier–Stokes calculations.* J. Comput. Phys. 36:55–70, 1980.
 - T. Krüger et al. *The Lattice Boltzmann Method: Principles and Practice.* Springer, 2017. doi:[10.1007/978-3-319-44649-3](https://doi.org/10.1007/978-3-319-44649-3)
 - M. Schäfer, S. Turek. *Benchmark computations of laminar flow around a cylinder.* NNFM 52:547–566, 1996. doi:[10.1007/978-3-322-89849-4_39](https://doi.org/10.1007/978-3-322-89849-4_39)
 

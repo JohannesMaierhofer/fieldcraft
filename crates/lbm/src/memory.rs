@@ -48,6 +48,13 @@ const GRADIENT_VELOCITY: u64 = 3 * F64;
 /// wall cells' own records are on the surface and not counted); with the wall model alone, the
 /// index only ([`INDEX`]).
 const WALL_DISTANCE: u64 = F64 + 4;
+/// Per cell with the Spalart–Allmaras model: its field ([`crate::sa::BYTES_PER_CELL`]: ν̃, faces,
+/// mask and scratch), wall distance and vorticity. The distance transform's working memory, while
+/// the flow is prepared, is [`crate::distance::transform_bytes`] of the grid.
+const SPALART_ALLMARAS: u64 = crate::sa::BYTES_PER_CELL + 2 * F64;
+/// Per cell the GPU backend stages on the host for the Spalart–Allmaras model: the wall distance and the
+/// initial ν̃ in single precision. The device's own buffers are not host memory and are not counted.
+const DEVICE_SA_STAGING: u64 = 2 * F32;
 /// Per cell with fans or porous zones, and with conducting obstacles: an index.
 const INDEX: u64 = 4;
 /// Per cell with a free surface: its kind, its mass and fill level, whether it is populated,
@@ -131,14 +138,20 @@ struct Shape {
     /// A turbulence model (an eddy viscosity), its wall damping and its wall model.
     turbulence: bool,
     damping: bool,
-    /// The finite-difference velocity gradient (the hybrid collision, Vreman's model).
+    /// The finite-difference velocity gradient (the hybrid collision, Vreman's model, the
+    /// Spalart–Allmaras model).
     gradients: bool,
+    /// The Spalart–Allmaras model's field.
+    spalart_allmaras: bool,
     wall_model: bool,
     zones: bool,
     zone_data: u64,
     zone_count: u64,
     conducting: bool,
     open_faces: [bool; 6],
+    inlets: bool,
+    /// The cells of a characteristic outlet's face (each keeps its boundary state).
+    characteristic_cells: u64,
     surface: bool,
     baffle_bytes: u64,
 }
@@ -146,7 +159,16 @@ struct Shape {
 impl Shape {
     /// The shape of a run over `domain` keeping `frames` frames after the initial one, with or
     /// without a turbulence model, its wall damping and its wall model.
-    fn new(domain: &FluidDomain, frames: u64, turbulence: bool, damping: bool, wall_model: bool, gradients: bool) -> Result<Shape> {
+    fn new(
+        domain: &FluidDomain,
+        frames: u64,
+        turbulence: bool,
+        damping: bool,
+        wall_model: bool,
+        gradients: bool,
+        trt: bool,
+        spalart_allmaras: bool,
+    ) -> Result<Shape> {
         let thermal = domain.thermal.as_ref();
         Ok(Shape {
             cells: domain.cells()?,
@@ -158,6 +180,7 @@ impl Shape {
             damping,
             wall_model,
             gradients,
+            spalart_allmaras,
             zones: !domain.fans.is_empty() || !domain.porous.is_empty(),
             zone_count: (domain.fans.len() + domain.porous.len()) as u64,
             // Headers, curves, and per fan its table entry, its list's padding and its slots of
@@ -167,6 +190,16 @@ impl Shape {
                 * F32,
             conducting: thermal.is_some_and(|t| !t.solids.is_empty()),
             open_faces: fieldcraft_model::BoxFace::ALL.map(|f| is_open(domain.faces.get(f))),
+            inlets: trt
+                && domain.free_surface.is_none()
+                && fieldcraft_model::BoxFace::ALL.iter().any(|face| matches!(domain.faces.get(*face), FaceCondition::Velocity { .. })),
+            characteristic_cells: {
+                let [nx, ny, nz] = domain.cells()?;
+                domain
+                    .characteristic_outlets()
+                    .map(|(f, _)| [ny * nz, nx * nz, nx * ny].get(f.axis()).copied().unwrap_or(0))
+                    .fold(0, u64::saturating_add)
+            },
             surface: domain.free_surface.is_some(),
             baffle_bytes: {
                 let cells = domain.cells()?;
@@ -197,7 +230,9 @@ impl Memory {
             setup.turbulent(),
             setup.van_driest.is_some(),
             setup.wall_model.is_some(),
-            setup.collision == Collision::Hrr || setup.vreman > 0.0,
+            setup.collision == Collision::Hrr || setup.vreman > 0.0 || setup.spalart_allmaras.is_some(),
+            setup.collision == Collision::Trt,
+            setup.spalart_allmaras.is_some(),
         )?;
         Ok(Memory::from_shape(&shape, backend))
     }
@@ -211,8 +246,21 @@ impl Memory {
             return Err(Error::Invalid(format!("step `{}` is not a fluid step", s.name)));
         };
         let (damping, wall_model) = turbulence.map_or((false, false), |t| (t.van_driest().is_some(), t.wall_model().is_some()));
-        let gradients = *collision == Some(Collision::Hrr) || matches!(turbulence, Some(fieldcraft_model::Turbulence::Vreman { .. }));
-        Ok(Memory::from_shape(&Shape::new(domain, u64::from(*frames), turbulence.is_some(), damping, wall_model, gradients)?, backend))
+        let sa = matches!(turbulence, Some(fieldcraft_model::Turbulence::SpalartAllmaras { .. }));
+        let gradients = *collision == Some(Collision::Hrr) || matches!(turbulence, Some(fieldcraft_model::Turbulence::Vreman { .. })) || sa;
+        Ok(Memory::from_shape(
+            &Shape::new(
+                domain,
+                u64::from(*frames),
+                turbulence.is_some(),
+                damping,
+                wall_model,
+                gradients,
+                collision.unwrap_or_default() == Collision::Trt,
+                sa,
+            )?,
+            backend,
+        ))
     }
 
     fn from_shape(s: &Shape, backend: Choice) -> Memory {
@@ -227,7 +275,11 @@ impl Memory {
             .map(|(c, open)| {
                 c.saturating_mul(
                     FACE_LINKS * size_of::<Link>() as u64
-                        + if open { (size_of::<OpenCell>() + size_of::<[f64; crate::lattice::Q]>()) as u64 } else { 0 },
+                        + if open {
+                            (size_of::<OpenCell>() + size_of::<[f64; crate::lattice::Q]>()) as u64
+                                // Stencils, corrections/filter scratch and construction lookup.
+                                + if s.inlets { (size_of::<crate::inlet::Stencil>() + size_of::<[f64; 3]>() + size_of::<(u32, u32)>()) as u64 } else { 0 }
+                        } else { 0 },
                 )
             })
             .fold(0, u64::saturating_add);
@@ -248,6 +300,9 @@ impl Memory {
         } else if s.wall_model {
             flow += INDEX;
         }
+        if s.spalart_allmaras {
+            flow += SPALART_ALLMARAS;
+        }
         if s.zones {
             // Both ownership per cell and the zones' lists of owned fluid cells.
             flow += 2 * INDEX;
@@ -260,28 +315,39 @@ impl Memory {
         if s.surface {
             flow += SURFACE;
         }
-        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(s.baffle_bytes);
+        let characteristic = s.characteristic_cells.saturating_mul(size_of::<crate::outlet::Characteristic>() as u64);
+        let prepared = per_cell(flow).saturating_add(boundary).saturating_add(characteristic).saturating_add(s.baffle_bytes);
+        // The wall distance is the last thing the flow builds: its transform's passes sit on top
+        // of the prepared flow, and are gone before the steps.
+        let transform = if s.spalart_allmaras { crate::distance::transform_bytes(s.cells) } else { 0 };
         // Count every open face conservatively (edges may occur more than once). The pressure
         // rows and their upload bytes coexist on the host while the device buffers are created.
-        let outlet_staging = face_cells
-            .iter()
-            .zip(s.open_faces)
-            .filter(|(_, open)| *open)
-            .fold(0u64, |sum, (cells, _)| sum.saturating_add(*cells))
-            .saturating_mul(2 * DEVICE_OUTLET_WORDS as u64 * F32);
+        // With TRT inlet reconstruction, velocity cells take a row as well: counted here too.
+        let open_cells = face_cells.iter().zip(s.open_faces).filter(|(_, open)| *open).fold(0u64, |sum, (cells, _)| sum.saturating_add(*cells));
+        let outlet_staging = open_cells.saturating_mul(2 * DEVICE_OUTLET_WORDS as u64 * F32);
         let zone_cells = if s.zones { per_cell(DEVICE_ZONE_CELL) } else { 0 };
+        // The inlet stencils appended to the open-cell words, including upload copies.
+        let inlet_staging = if s.inlets { open_cells.saturating_mul(3 * size_of::<crate::inlet::Stencil>() as u64) } else { 0 };
         let (setup, state, readback) = match backend {
             // The CPU flow allocates its streaming targets on the first step and keeps
             // everything to the end.
             Choice::Cpu => {
                 let state = prepared.saturating_add(per_cell(targets + gradients)).saturating_add(per_cell(RESULT));
-                (state, state, per_cell(READBACK + if s.heat { READBACK_HEAT } else { 0 } + if s.surface { READBACK_FILL } else { 0 }))
+                (
+                    state.max(prepared.saturating_add(transform)),
+                    state,
+                    per_cell(READBACK + if s.heat { READBACK_HEAT } else { 0 } + if s.surface { READBACK_FILL } else { 0 }),
+                )
             }
             // The device backend copies the flow up, and the flow is dropped before the steps.
             Choice::Device => (
                 prepared
+                    .saturating_add(transform)
                     .saturating_add(outlet_staging)
-                    .saturating_add(per_cell(DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 }))
+                    .saturating_add(per_cell(
+                        DEVICE_STAGING + if s.damping { DEVICE_DAMPING } else { 0 } + if s.spalart_allmaras { DEVICE_SA_STAGING } else { 0 },
+                    ))
+                    .saturating_add(inlet_staging)
                     .saturating_add(s.zone_data.saturating_add(zone_cells).saturating_mul(3)),
                 per_cell(2 * RESULT).saturating_add(s.zone_data).saturating_add(zone_cells),
                 per_cell(READBACK + DEVICE_READBACK + if s.heat { READBACK_HEAT + DEVICE_READBACK_HEAT } else { 0 })

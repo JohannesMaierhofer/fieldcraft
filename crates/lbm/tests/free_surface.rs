@@ -104,6 +104,8 @@ fn a_plug_fills_a_frictionless_channel_at_the_inlet_speed() {
     let dt = 0.05 * dx / u; // lattice speed 0.05
     let end = 0.6 / u; // the front at x = 0.6
     let m = model(1.0, 1e-3, d, step(end, dt, None));
+    let (_, flow) = prepare(&m, &[]);
+    assert!(flow.inlet_stencils().is_empty(), "a moving liquid/gas interface is not an inner-fluid stencil");
     let r = solve_fluid(&m, None, &[], &Limits::default()).unwrap();
     let fs = r.stats.free_surface.unwrap();
     println!("plug: {fs:?}");
@@ -195,7 +197,7 @@ fn unsupported_combinations_are_refused_by_name() {
         edit(&mut d);
         refused(&model(1.0, 0.01, d, step(1.0, 0.1, None)), what);
     };
-    refuse(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Default::default() }, "pressure face");
+    refuse(&|d| d.faces.x_max = FaceCondition::Pressure { pressure: 0.0, outflow: Default::default(), sigma: None }, "pressure face");
     let mut hot = tank(8, 8, 0.1, &[([0.0; 3], [0.8, 0.1, 0.4])]);
     hot.thermal = Some(Default::default());
     refused(&hot_model(1.0, 0.01, 0.01, hot, step(1.0, 0.1, None)), "heat");

@@ -64,6 +64,20 @@ pub struct ZoneHistory {
     pub pressure: Vec<f64>,
     /// A fan's pressure rise from its curve at that time (empty for a porous zone).
     pub fan_rise: Vec<f64>,
+    /// Its share of one zone of the whole model: ½ per symmetry plane it reaches, else 1.
+    #[serde(default = "whole", skip_serializing_if = "is_whole")]
+    pub share: f64,
+}
+
+/// A share of one part of the whole model: 1 for a part clear of every symmetry plane (and in
+/// results saved before symmetry planes).
+fn whole() -> f64 {
+    1.0
+}
+
+/// Whether a saved part can omit its default share of one.
+fn is_whole(share: &f64) -> bool {
+    *share == 1.0
 }
 
 /// The liquid's extent and volume over time, with a free surface (one entry per
@@ -95,8 +109,12 @@ pub struct SolidResult {
     pub body: String,
     /// Its cells (grid indices), in cell order.
     pub cells: Vec<u32>,
-    /// The heat it generates (model units).
+    /// The heat it generates in the box (model units): its power times `power_share`.
     pub power: f64,
+    /// Its share of one body of the whole model, which its entered power is for: ½ per symmetry
+    /// plane it reaches (it continues across the plane as its mirror image), else 1.
+    #[serde(default = "whole", skip_serializing_if = "is_whole")]
+    pub power_share: f64,
     /// The factor its heat capacity was scaled by for a steady state (1 otherwise).
     pub capacity_scale: f64,
     /// The highest temperature it may reach (kelvin), when the model gives one.
@@ -451,6 +469,9 @@ fn run_checkpointed(
     if store.is_some() && setup.domain.has_baffles() {
         return Err(Error::Invalid("baffles do not support checkpoint/resume yet".into()));
     }
+    if let Some((face, _)) = setup.domain.characteristic_outlet().filter(|_| store.is_some()) {
+        return Err(Error::Invalid(format!("not supported yet: a checkpoint of a characteristic outflow (box face {})", face.name())));
+    }
     let checkpoint_every = store.as_ref().map_or(0, |s| s.every());
     if store.is_some() && (checkpoint_every == 0 || flow.name() != "cpu") {
         return Err(Error::Invalid("checkpointing needs a positive step interval and the CPU backend".into()));
@@ -474,7 +495,7 @@ fn run_checkpointed(
     let mut zones: Vec<ZoneHistory> = setup
         .zones
         .iter()
-        .map(|z| ZoneHistory { name: z.name.clone(), fan: z.is_fan(), flow: Vec::new(), pressure: Vec::new(), fan_rise: Vec::new() })
+        .map(|z| ZoneHistory { name: z.name.clone(), fan: z.is_fan(), flow: Vec::new(), pressure: Vec::new(), fan_rise: Vec::new(), share: z.share })
         .collect();
     let (qs, ps) = (setup.volume_flow_scale(), setup.pressure_scale());
     let mut surface: Option<SurfaceHistory> = setup.surface.as_ref().map(|_| SurfaceHistory::default());
@@ -674,6 +695,12 @@ fn run_checkpointed(
     if let (Some(clamps), Some(r)) = (flow.viscosity_clamps(), &setup.rheology) {
         warnings.extend(clamps.warning(flow.fluid_cells(), r.tau));
     }
+    let held = flow.characteristic_held();
+    if held > 0 {
+        warnings.push(format!(
+            "the characteristic outlet did not absorb in {held} cell updates: there its balance was not finite and positive (check the run for divergence) or the cell has no fluid cell inside it (an obstacle in the outlet's inner layer)"
+        ));
+    }
     for body in flow.empty_obstacles() {
         warnings.push(format!("obstacle `{body}` covers no cell centre: it is smaller than the spacing or outside the box"));
     }
@@ -684,6 +711,15 @@ fn run_checkpointed(
             w.halfway() + w.interpolated,
             w.no_second_node,
             w.no_crossing
+        ));
+    }
+    if let Some(w) = flow.wall_links().filter(|w| w.linear() > 0) {
+        warnings.push(format!(
+            "quadratic interpolated walls: {} of {} interpolated wall links kept the linear form ({} on a moving wall, which the quadratic form has no term for, {} without the fluid cells in line it reads)",
+            w.linear(),
+            w.interpolated,
+            w.linear_moving_wall,
+            w.linear_too_few_nodes
         ));
     }
     if flow.name() != "cpu" {
@@ -725,7 +761,8 @@ fn run_checkpointed(
             radiated: if s.radiation.is_some() { radiated.get(k).cloned().unwrap_or_default() } else { Vec::new() },
             body: s.body.clone(),
             cells: flow.conducting().get(k).cloned().unwrap_or_default(),
-            power: s.power * hs,
+            power: s.power * hs * flow.power_share().get(k).copied().unwrap_or(1.0),
+            power_share: flow.power_share().get(k).copied().unwrap_or(1.0),
             capacity_scale: s.capacity_scale,
             limit: s.limit,
         })
@@ -733,6 +770,20 @@ fn run_checkpointed(
     let forces: Vec<_> =
         flow.groups().iter().zip(forces).map(|(g, force)| ForceHistory { name: g.name.clone(), body: g.body.clone(), force }).collect();
     let validity = crate::validity::Report::new(validity.samples, validity.every, every, &forces)?;
+    // The setup's Mach number is an estimate from the characteristic velocity; the sampled fields
+    // give the true largest speed over every fluid cell, open layers included.
+    if let Some(peak) = validity.peak_mach()
+        && peak.mach_max > crate::setup::MACH_WARNING
+    {
+        warnings.push(format!(
+            "the largest local Mach number over the fluid cells is {:.3} (lattice speed {:.3}), above {:.1}: the compressibility error, of order Ma² ≈ {:.0}%, is visible; the setup estimated {:.3} from the characteristic velocity; lower the time step",
+            peak.mach_max,
+            peak.mach_max * crate::lattice::CS2.sqrt(),
+            crate::setup::MACH_WARNING,
+            100.0 * peak.mach_max * peak.mach_max,
+            setup.mach
+        ));
+    }
     if validity.within_study_envelope == Some(false) {
         warnings.push("sampled fields exceed the proposed low-Mach study envelope (density departure 0.02, local Mach 0.2); execution completion does not establish validity".into());
     }

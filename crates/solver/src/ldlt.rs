@@ -54,6 +54,11 @@
 //! directions. A pivot that would be zero stops the factorization (above), so the count of zero
 //! eigenvalues is never reported as anything but a located error.
 //!
+//! **Complex symmetric.** The factor is generic over [`crate::scalar::Scalar`]: `Complex64`
+//! matrices (K − ω²M + iωC) factor as A = Aᵀ, with the transpose in every step and never the
+//! conjugate. Pivots are compared on their moduli. Sylvester's law needs an order, so the inertia
+//! exists for the real factor only.
+//!
 //! **Threads and determinism.** Every pivot decision and every entry is computed by one task in
 //! an order fixed by the matrix, ties in the search broken by the lowest index, so the factor,
 //! its pivots and its inertia are the same bit for bit on any number of threads.
@@ -63,8 +68,9 @@ use serde::Serialize;
 use crate::Result;
 use crate::cholesky::{
     Context, Factor, FactorError, PANEL, PIVOT_TOLERANCE, Panel, Pivot, Structure, Supernode, Symbolic, UpperColumns, offset, products,
-    solve_supernodes, subtract, times_d,
+    solve_supernodes, solve_supernodes_many, subtract, times_d,
 };
+use crate::scalar::Scalar;
 use crate::sparse::Csr;
 
 /// (1 + √17)/8: the growth bound of Bunch and Kaufman.
@@ -82,20 +88,25 @@ pub struct Inertia {
 }
 
 /// One supernode of an LDLᵀ factor.
-#[derive(Debug, Clone, Default)]
-struct Block {
+#[derive(Debug, Clone)]
+struct Block<T> {
     /// L below the pivots and D on them, the lower trapezoid by columns in pivot order.
-    values: Vec<f64>,
+    values: Vec<T>,
     pivots: Vec<Pivot>,
     /// `order[c]`: the supernode's own column (0..w, in the symbolic order) at pivot position c.
     order: Vec<usize>,
-    inertia: Inertia,
     two_by_two: usize,
 }
 
-impl Supernode for Block {
+impl<T> Default for Block<T> {
+    fn default() -> Self {
+        Block { values: Vec::new(), pivots: Vec::new(), order: Vec::new(), two_by_two: 0 }
+    }
+}
+
+impl<T: Scalar> Supernode<T> for Block<T> {
     #[inline]
-    fn values(&self) -> &[f64] {
+    fn values(&self) -> &[T] {
         &self.values
     }
     #[inline]
@@ -117,7 +128,7 @@ enum Choice {
 /// Symmetric interchange of local columns p < q (both among the supernode's own columns) in an
 /// m-row lower trapezoid: the rows of the columns before p, the diagonals, the strip between them
 /// and the rows below q.
-fn interchange(v: &mut [f64], m: usize, p: usize, q: usize) {
+fn interchange<T>(v: &mut [T], m: usize, p: usize, q: usize) {
     let at = |r: usize, c: usize| offset(m, c) + r - c;
     for c in 0..p {
         v.swap(at(p, c), at(q, c));
@@ -133,13 +144,13 @@ fn interchange(v: &mut [f64], m: usize, p: usize, q: usize) {
 
 /// The largest magnitude of `v[i]` over `range` except `skip`, with the lowest such index; NaN
 /// when an entry is not a number.
-fn largest(v: &[f64], range: std::ops::Range<usize>, skip: Option<usize>) -> (usize, f64) {
+fn largest<T: Scalar>(v: &[T], range: std::ops::Range<usize>, skip: Option<usize>) -> (usize, f64) {
     let mut best = (range.start, 0.0f64);
     for i in range {
         if Some(i) == skip {
             continue;
         }
-        let x = v.get(i).copied().unwrap_or(0.0).abs();
+        let x = v.get(i).copied().unwrap_or(T::ZERO).modulus();
         if x.is_nan() {
             return (i, f64::NAN);
         }
@@ -151,18 +162,18 @@ fn largest(v: &[f64], range: std::ops::Range<usize>, skip: Option<usize>) -> (us
 }
 
 /// The work buffers of one supernode's panels.
-struct Scratch {
+struct Scratch<T> {
     /// The current values of the column being searched and of a candidate, by local row.
-    a: Vec<f64>,
-    b: Vec<f64>,
+    a: Vec<T>,
+    b: Vec<T>,
     /// A row of L D over the panel's factored columns.
-    w: Vec<f64>,
+    w: Vec<T>,
 }
 
-impl Block {
+impl<T: Scalar> Block<T> {
     /// Column `c` (local, ≥ k) of the part still to factor, rows k..m, into `out`: the trapezoid's
     /// entries less the products with the panel's factored columns c0..k.
-    fn current(&self, m: usize, c0: usize, k: usize, c: usize, out: &mut [f64], w: &mut Vec<f64>) {
+    fn current(&self, m: usize, c0: usize, k: usize, c: usize, out: &mut [T], w: &mut Vec<T>) {
         let t = Panel { m, data: &self.values };
         for r in k..m {
             if let Some(o) = out.get_mut(r) {
@@ -174,14 +185,14 @@ impl Block {
         times_d(w, &t, c0, self.pivots.get(c0..k).unwrap_or_default());
         for (q, wq) in (c0..k).zip(w.iter()) {
             for (o, l) in out.get_mut(k..m).unwrap_or_default().iter_mut().zip(t.column(q, k, m - k)) {
-                *o -= l * wq;
+                *o -= *l * *wq;
             }
         }
     }
 
     /// Swap local columns p and q (pivot positions ≥ k) in the trapezoid, the order and the
     /// current columns.
-    fn swap(&mut self, m: usize, p: usize, q: usize, scratch: &mut Scratch) {
+    fn swap(&mut self, m: usize, p: usize, q: usize, scratch: &mut Scratch<T>) {
         if p == q {
             return;
         }
@@ -193,30 +204,25 @@ impl Block {
     }
 
     /// Store a 1 × 1 pivot at k from the current column `col`.
-    fn one(&mut self, m: usize, k: usize, col: &[f64]) {
-        let d = col.get(k).copied().unwrap_or(0.0);
+    fn one(&mut self, m: usize, k: usize, col: &[T]) {
+        let d = col.get(k).copied().unwrap_or(T::ZERO);
         let start = offset(m, k);
         if let Some(x) = self.values.get_mut(start) {
             *x = d;
         }
         for r in k + 1..m {
             if let Some(x) = self.values.get_mut(start + r - k) {
-                *x = col.get(r).copied().unwrap_or(0.0) / d;
+                *x = col.get(r).copied().unwrap_or(T::ZERO) / d;
             }
         }
         if let Some(p) = self.pivots.get_mut(k) {
             *p = Pivot::One;
         }
-        if d > 0.0 {
-            self.inertia.positive += 1;
-        } else {
-            self.inertia.negative += 1;
-        }
     }
 
     /// Store a 2 × 2 pivot at k, k + 1 from the current columns `a` (k) and `b` (k + 1).
-    fn two(&mut self, m: usize, k: usize, a: &[f64], b: &[f64]) {
-        let get = |v: &[f64], r: usize| v.get(r).copied().unwrap_or(0.0);
+    fn two(&mut self, m: usize, k: usize, a: &[T], b: &[T]) {
+        let get = |v: &[T], r: usize| v.get(r).copied().unwrap_or(T::ZERO);
         let (d11, d21, d22) = (get(a, k), get(a, k + 1), get(b, k + 1));
         let det = d11 * d22 - d21 * d21;
         let (s0, s1) = (offset(m, k), offset(m, k + 1));
@@ -240,15 +246,6 @@ impl Block {
         if let Some(p) = self.pivots.get_mut(k + 1) {
             *p = Pivot::Second;
         }
-        // The eigenvalues' signs: one of each when det < 0, else both the sign of the trace.
-        if det < 0.0 {
-            self.inertia.positive += 1;
-            self.inertia.negative += 1;
-        } else if d11 + d22 > 0.0 {
-            self.inertia.positive += 2;
-        } else {
-            self.inertia.negative += 2;
-        }
         self.two_by_two += 1;
     }
 
@@ -263,17 +260,17 @@ impl Block {
         c0: usize,
         scale: &dyn Fn(usize) -> f64,
         column: &dyn Fn(usize) -> usize,
-        scratch: &mut Scratch,
+        scratch: &mut Scratch<T>,
     ) -> std::result::Result<usize, FactorError> {
         let end = (c0 + PANEL).min(w);
         let mut k = c0;
         while k < end {
-            let singular = |b: &Block, at: usize| FactorError::Singular { column: column(b.order.get(at).copied().unwrap_or(at)) };
-            let negligible = |b: &Block, at: usize, x: f64| !(x > PIVOT_TOLERANCE * scale(b.order.get(at).copied().unwrap_or(at)));
+            let singular = |b: &Block<T>, at: usize| FactorError::Singular { column: column(b.order.get(at).copied().unwrap_or(at)) };
+            let negligible = |b: &Block<T>, at: usize, x: f64| !(x > PIVOT_TOLERANCE * scale(b.order.get(at).copied().unwrap_or(at)));
             let mut a = std::mem::take(&mut scratch.a);
             self.current(m, c0, k, k, &mut a, &mut scratch.w);
             scratch.a = a;
-            let akk = scratch.a.get(k).copied().unwrap_or(0.0).abs();
+            let akk = scratch.a.get(k).copied().unwrap_or(T::ZERO).modulus();
             let (r0, omega_k) = largest(&scratch.a, k + 1..w, None);
             if !akk.is_finite() || !omega_k.is_finite() {
                 return Err(singular(self, k));
@@ -289,7 +286,7 @@ impl Block {
                     self.current(m, c0, k, r, &mut b, &mut scratch.w);
                     scratch.b = b;
                     let (s, omega_r) = largest(&scratch.b, k..w, Some(r));
-                    let arr = scratch.b.get(r).copied().unwrap_or(0.0).abs();
+                    let arr = scratch.b.get(r).copied().unwrap_or(T::ZERO).modulus();
                     if !arr.is_finite() || !omega_r.is_finite() {
                         return Err(singular(self, k));
                     }
@@ -308,7 +305,7 @@ impl Block {
             match choice {
                 Choice::One(p) => {
                     self.swap(m, k, p, scratch);
-                    if negligible(self, k, scratch.a.get(k).copied().unwrap_or(0.0).abs()) {
+                    if negligible(self, k, scratch.a.get(k).copied().unwrap_or(T::ZERO).modulus()) {
                         return Err(singular(self, k));
                     }
                     let a = std::mem::take(&mut scratch.a);
@@ -321,7 +318,7 @@ impl Block {
                     self.swap(m, k, i, scratch);
                     let r = if r == k { i } else { r };
                     self.swap(m, k + 1, r, scratch);
-                    let offdiagonal = scratch.a.get(k + 1).copied().unwrap_or(0.0).abs();
+                    let offdiagonal = scratch.a.get(k + 1).copied().unwrap_or(T::ZERO).modulus();
                     let size = scale(self.order.get(k).copied().unwrap_or(k)).max(scale(self.order.get(k + 1).copied().unwrap_or(k + 1)));
                     if !(offdiagonal > PIVOT_TOLERANCE * size) {
                         return Err(singular(self, k));
@@ -338,17 +335,16 @@ impl Block {
 }
 
 /// Factor supernode `j` into `own`; its descendants are `done[k - base]`.
-fn supernode(context: &Context, j: usize, done: &[Block], base: usize, own: &mut Block) -> std::result::Result<(), FactorError> {
+fn supernode<T: Scalar>(context: &Context<T>, j: usize, done: &[Block<T>], base: usize, own: &mut Block<T>) -> std::result::Result<(), FactorError> {
     context.assemble(j, done, base, &mut own.values)?;
     let (m, cols) = (context.s.rows(j).len(), context.s.cols(j));
     let (w, f) = (cols.len(), cols.start);
     own.pivots = vec![Pivot::One; w];
     own.order = (0..w).collect();
-    own.inertia = Inertia::default();
     own.two_by_two = 0;
     let scale = |local: usize| context.a.scale.get(f + local).copied().unwrap_or(0.0);
     let column = |local: usize| f + local;
-    let mut scratch = Scratch { a: vec![0.0; m], b: vec![0.0; m], w: Vec::with_capacity(PANEL + 1) };
+    let mut scratch = Scratch { a: vec![T::ZERO; m], b: vec![T::ZERO; m], w: Vec::with_capacity(PANEL + 1) };
     let mut c0 = 0;
     while c0 < w {
         let c1 = own.panel(m, w, c0, &scale, &column, &mut scratch)?;
@@ -362,40 +358,34 @@ fn supernode(context: &Context, j: usize, done: &[Block], base: usize, own: &mut
     Ok(())
 }
 
-/// A symmetric indefinite factor P A Pᵀ = L D Lᵀ in supernodes.
+/// A symmetric indefinite factor P A Pᵀ = L D Lᵀ in supernodes (complex symmetric for
+/// `Complex64`: the transpose, never the conjugate transpose, in every step).
 #[derive(Debug, Clone)]
-pub struct LdltFactor {
+pub struct LdltFactor<T = f64> {
     pub n: usize,
     perm: Vec<usize>,
     structure: Structure,
-    blocks: Vec<Block>,
+    blocks: Vec<Block<T>>,
     entries: usize,
-    inertia: Inertia,
     two_by_two: usize,
 }
 
-impl LdltFactor {
-    pub fn new(a: &UpperColumns, max_entries: usize) -> std::result::Result<LdltFactor, FactorError> {
-        LdltFactor::from_symbolic(&Symbolic::new(a, max_entries)?)
+impl<T: Scalar> LdltFactor<T> {
+    pub fn new(a: &UpperColumns<T>, max_entries: usize) -> std::result::Result<LdltFactor<T>, FactorError> {
+        LdltFactor::from_symbolic(&Symbolic::new(a, max_entries)?, a)
     }
 
-    pub(crate) fn from_symbolic(symbolic: &Symbolic) -> std::result::Result<LdltFactor, FactorError> {
-        let mut blocks = symbolic.allocate()?.into_iter().map(|values| Block { values, ..Block::default() }).collect::<Vec<_>>();
-        symbolic.factor(&mut blocks, supernode)?;
-        let mut inertia = Inertia::default();
-        let mut two_by_two = 0;
-        for b in &blocks {
-            inertia.positive += b.inertia.positive;
-            inertia.negative += b.inertia.negative;
-            two_by_two += b.two_by_two;
-        }
+    pub(crate) fn from_symbolic(symbolic: &Symbolic, a: &UpperColumns<T>) -> std::result::Result<LdltFactor<T>, FactorError> {
+        let lower = symbolic.numeric(a)?;
+        let mut blocks = symbolic.allocate::<T>()?.into_iter().map(|values| Block { values, ..Block::default() }).collect::<Vec<_>>();
+        symbolic.factor(&lower, &mut blocks, supernode)?;
+        let two_by_two = blocks.iter().map(|b| b.two_by_two).sum();
         Ok(LdltFactor {
             n: symbolic.n,
             perm: symbolic.perm.clone(),
             structure: symbolic.structure.clone(),
             blocks,
             entries: symbolic.entries,
-            inertia,
             two_by_two,
         })
     }
@@ -405,18 +395,57 @@ impl LdltFactor {
         self.entries
     }
 
-    pub fn inertia(&self) -> Inertia {
-        self.inertia
-    }
-
     /// The number of 2 × 2 pivots.
     pub fn two_by_two(&self) -> usize {
         self.two_by_two
     }
 
-    /// Solve A x = b in place.
-    pub fn solve(&self, b: &mut [f64]) -> Result<()> {
+    /// Solve A x = b in place (the transpose, not the conjugate transpose, for complex A).
+    pub fn solve(&self, b: &mut [T]) -> Result<()> {
         solve_supernodes(self.n, &self.perm, &self.structure, &self.blocks, b)
+    }
+
+    /// Solve A x = b in place for each of `bs`, reading the factor once: each the same bit for
+    /// bit as [`Self::solve`].
+    pub fn solve_many(&self, bs: &mut [&mut [T]]) -> Result<()> {
+        solve_supernodes_many(self.n, &self.perm, &self.structure, &self.blocks, bs)
+    }
+}
+
+impl LdltFactor<f64> {
+    /// The counts of positive and negative eigenvalues (Sylvester's law, on D): a 1 × 1 pivot is
+    /// its own sign; a 2 × 2 pivot has one of each sign when its determinant is negative, else
+    /// both have the sign of the trace. Real only: the complex factor has no inertia.
+    pub fn inertia(&self) -> Inertia {
+        let mut inertia = Inertia::default();
+        for (k, block) in self.blocks.iter().enumerate() {
+            let m = self.structure.rows(k).len();
+            let d = |r: usize, c: usize| block.values.get(offset(m, c) + r - c).copied().unwrap_or(0.0);
+            let mut c = 0;
+            while c < block.pivots.len() {
+                if block.pivots.get(c) == Some(&Pivot::First) {
+                    let (d11, d21, d22) = (d(c, c), d(c + 1, c), d(c + 1, c + 1));
+                    let det = d11 * d22 - d21 * d21;
+                    if det < 0.0 {
+                        inertia.positive += 1;
+                        inertia.negative += 1;
+                    } else if d11 + d22 > 0.0 {
+                        inertia.positive += 2;
+                    } else {
+                        inertia.negative += 2;
+                    }
+                    c += 2;
+                } else {
+                    if d(c, c) > 0.0 {
+                        inertia.positive += 1;
+                    } else {
+                        inertia.negative += 1;
+                    }
+                    c += 1;
+                }
+            }
+        }
+        inertia
     }
 }
 
@@ -447,9 +476,9 @@ impl Symmetric {
             Kind::Indefinite => LdltFactor::new(a, max_entries).map(Symmetric::Indefinite),
             Kind::Auto => {
                 let symbolic = Symbolic::new(a, max_entries)?;
-                match Factor::from_symbolic(&symbolic) {
+                match Factor::from_symbolic(&symbolic, a) {
                     Ok(f) => Ok(Symmetric::Cholesky(f)),
-                    Err(FactorError::NotPositiveDefinite { .. }) => LdltFactor::from_symbolic(&symbolic).map(Symmetric::Indefinite),
+                    Err(FactorError::NotPositiveDefinite { .. }) => LdltFactor::from_symbolic(&symbolic, a).map(Symmetric::Indefinite),
                     Err(e) => Err(e),
                 }
             }
@@ -482,6 +511,14 @@ impl Symmetric {
         match self {
             Symmetric::Cholesky(f) => f.solve(b),
             Symmetric::Indefinite(f) => f.solve(b),
+        }
+    }
+
+    /// [`Self::solve`] for each of `bs`, reading the factor once.
+    pub fn solve_many(&self, bs: &mut [&mut [f64]]) -> Result<()> {
+        match self {
+            Symmetric::Cholesky(f) => f.solve_many(bs),
+            Symmetric::Indefinite(f) => f.solve_many(bs),
         }
     }
 
@@ -527,8 +564,9 @@ mod tests {
     use super::*;
     use crate::Error;
     use fieldcraft_parallel as parallel;
+    use num_complex::Complex64;
 
-    fn csr(rows: &[Vec<(usize, f64)>]) -> Csr {
+    fn csr<T: Scalar>(rows: &[Vec<(usize, T)>]) -> Csr<T> {
         let mut ptr = vec![0];
         let mut idx = Vec::new();
         let mut val = Vec::new();
@@ -615,11 +653,9 @@ mod tests {
         assert!(residual(&a, &|b: &mut [f64]| f.solve(b).unwrap(), 1.0) < 1e-12);
     }
 
-    #[test]
-    fn two_by_two_pivots_for_zero_diagonals() {
-        // A saddle point [[K, B], [Bᵀ, 0]] inside one dense supernode: zero diagonals need 2 × 2
-        // pivots, and the inertia is (positive: K's size, negative: the constraints').
-        let (nk, nb) = (8, 3);
+    /// A saddle point [[K, B], [Bᵀ, 0]] inside one dense supernode: zero diagonals need 2 × 2
+    /// pivots; its inertia is (positive: K's size, negative: the constraints').
+    fn saddle(nk: usize, nb: usize) -> Csr {
         let n = nk + nb;
         let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
         for i in 0..nk {
@@ -648,7 +684,13 @@ mod tests {
         for (i, row) in rows.iter().enumerate() {
             permuted[inverse[i]] = row.iter().map(|(c, v)| (inverse[*c], *v)).collect();
         }
-        let a = csr(&permuted);
+        csr(&permuted)
+    }
+
+    #[test]
+    fn two_by_two_pivots_for_zero_diagonals() {
+        let (nk, nb) = (8, 3);
+        let a = saddle(nk, nb);
         let f = LdltFactor::new(&UpperColumns::from_symmetric(&a), usize::MAX).unwrap();
         assert_eq!(f.inertia(), Inertia { positive: nk, negative: nb });
         assert!(f.two_by_two() > 0);
@@ -683,7 +725,7 @@ mod tests {
         // The cap is checked before the numeric factorization; empty and 1 × 1 matrices.
         let (a, _) = shifted_grid([3, 3, 3], 2.0);
         assert!(matches!(LdltFactor::new(&UpperColumns::from_symmetric(&a), 10), Err(FactorError::TooLarge { .. })));
-        let empty = Csr { n: 0, ptr: vec![0], idx: vec![], val: vec![] };
+        let empty: Csr = Csr { n: 0, ptr: vec![0], idx: vec![], val: vec![] };
         LdltFactor::new(&UpperColumns::from_symmetric(&empty), 10).unwrap().solve(&mut []).unwrap();
         let f = LdltFactor::new(&UpperColumns::from_symmetric(&csr(&[vec![(0, -4.0)]])), 10).unwrap();
         let mut b = [2.0];
@@ -708,6 +750,137 @@ mod tests {
         }
         let err = residual(&a, &|b: &mut [f64]| one.solve(b).unwrap(), 0.1);
         assert!(err < 1e-9, "{err}");
+    }
+
+    /// FNV-1a over the bit patterns of the values: one changed bit changes the fingerprint.
+    fn fingerprint(values: impl Iterator<Item = f64>) -> u64 {
+        values.fold(0xcbf2_9ce4_8422_2325, |h, v| (h ^ v.to_bits()).wrapping_mul(0x0000_0100_0000_01b3))
+    }
+
+    /// The f64 factors and solutions of real systems, as bits (exact right-hand sides, so every
+    /// platform builds the same inputs): definite, indefinite and 2 × 2
+    /// pivoted. Frozen from the factorization before the scalar generalization (any change to the
+    /// f64 arithmetic changes a fingerprint).
+    #[derive(Debug, PartialEq, Eq)]
+    struct Frozen {
+        name: &'static str,
+        negative: usize,
+        two_by_two: usize,
+        factor: u64,
+        solution: u64,
+        cholesky: Option<u64>,
+    }
+
+    fn frozen_cases() -> Vec<Frozen> {
+        let cases = [
+            ("shifted grid, definite", shifted_grid([5, 5, 5], -0.5).0),
+            ("shifted grid, indefinite", shifted_grid([7, 6, 5], 3.3).0),
+            ("saddle point, 2 × 2 pivots", saddle(8, 3)),
+            ("hex stiffness, indefinite", hex_pattern(6, 22.0)),
+        ];
+        cases
+            .into_iter()
+            .map(|(name, a)| {
+                let upper = UpperColumns::from_symmetric(&a);
+                let f = LdltFactor::new(&upper, usize::MAX).unwrap();
+                // Exact values: sin differs between libms, and the freeze must not.
+                let x: Vec<f64> = (0..a.n).map(|i| ((i * 37 % 101) as f64 - 50.0) / 50.0).collect();
+                let mut b = vec![0.0; a.n];
+                a.mul(&x, &mut b);
+                f.solve(&mut b).unwrap();
+                let cholesky = Factor::new(&upper, usize::MAX).ok().map(|c| {
+                    let mut y = vec![0.0; a.n];
+                    a.mul(&x, &mut y);
+                    c.solve(&mut y).unwrap();
+                    fingerprint(y.into_iter())
+                });
+                Frozen {
+                    name,
+                    negative: f.inertia().negative,
+                    two_by_two: f.two_by_two(),
+                    factor: fingerprint(f.blocks.iter().flat_map(|b| b.values.iter().copied())),
+                    solution: fingerprint(b.into_iter()),
+                    cholesky,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn f64_factors_keep_their_bits() {
+        let frozen = [
+            Frozen {
+                name: "shifted grid, definite",
+                negative: 0,
+                two_by_two: 0,
+                factor: 12318096910519023990,
+                solution: 10217835541271929398,
+                cholesky: Some(15069623423640047316),
+            },
+            Frozen {
+                name: "shifted grid, indefinite",
+                negative: 78,
+                two_by_two: 9,
+                factor: 17838274908630861643,
+                solution: 4015666017640459628,
+                cholesky: None,
+            },
+            Frozen {
+                name: "saddle point, 2 × 2 pivots",
+                negative: 3,
+                two_by_two: 3,
+                factor: 4028760691601933113,
+                solution: 11718422723752440401,
+                cholesky: None,
+            },
+            Frozen {
+                name: "hex stiffness, indefinite",
+                negative: 45,
+                two_by_two: 40,
+                factor: 2687260628477475718,
+                solution: 8749587493275634787,
+                cholesky: None,
+            },
+        ];
+        assert_eq!(frozen_cases(), frozen.into_iter().collect::<Vec<_>>());
+    }
+
+    /// Several right-hand sides solved at once give each one's solve bit for bit, through pivoted
+    /// supernodes, local interchanges and 2 × 2 pivots, with LDLᵀ and Cholesky; a wrong length
+    /// is refused before any right-hand side is touched.
+    #[test]
+    fn several_right_hand_sides_solve_as_each_alone() {
+        let cases = [csr(&[vec![(0, 4.0)]]), shifted_grid([4, 3, 3], -0.5).0, shifted_grid([4, 3, 3], 2.7).0, shifted_grid([5, 4, 3], 7.1).0];
+        let bits = |v: &[Vec<f64>]| v.iter().map(|x| x.iter().map(|y| y.to_bits()).collect::<Vec<_>>()).collect::<Vec<_>>();
+        for (case, a) in cases.iter().enumerate() {
+            let upper = UpperColumns::from_symmetric(a);
+            let factors = [Symmetric::Indefinite(LdltFactor::new(&upper, usize::MAX).unwrap())]
+                .into_iter()
+                .chain(Factor::new(&upper, usize::MAX).ok().map(Symmetric::Cholesky));
+            for f in factors {
+                for k in [1, 2, 6] {
+                    let rhs: Vec<Vec<f64>> = (0..k).map(|s| (0..a.n).map(|i| ((i * 5 + s * 3) as f64 * 0.37).cos()).collect()).collect();
+                    let alone: Vec<Vec<f64>> = rhs
+                        .iter()
+                        .map(|b| {
+                            let mut x = b.clone();
+                            f.solve(&mut x).unwrap();
+                            x
+                        })
+                        .collect();
+                    let mut together = rhs.clone();
+                    f.solve_many(&mut together.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>()).unwrap();
+                    assert_eq!(bits(&together), bits(&alone), "case {case}, {k} right-hand sides");
+                }
+                let mut good = vec![1.0; a.n];
+                let mut short = vec![0.25; a.n.saturating_sub(1)];
+                let before = (good.clone(), short.clone());
+                if a.n > 0 {
+                    assert!(matches!(f.solve_many(&mut [&mut good[..], &mut short[..]]), Err(Error::Internal(_))));
+                    assert_eq!((good, short), before);
+                }
+            }
+        }
     }
 
     #[test]
@@ -875,5 +1048,178 @@ mod tests {
                 indefinite.two_by_two()
             );
         }
+    }
+
+    /// The complex-symmetric entry (i, j) of a matrix (0 when absent).
+    fn at(a: &Csr<Complex64>, i: usize, j: usize) -> Complex64 {
+        let (cols, vals) = a.row(i);
+        cols.binary_search(&j).ok().and_then(|k| vals.get(k)).copied().unwrap_or(Complex64::ZERO)
+    }
+
+    /// The largest modulus of r − A x over the largest modulus of r.
+    fn complex_residual(a: &Csr<Complex64>, x: &[Complex64], rhs: &[Complex64]) -> f64 {
+        let mut ax = vec![Complex64::ZERO; a.n];
+        a.mul(x, &mut ax);
+        let err = rhs.iter().zip(&ax).map(|(p, q)| (*p - *q).norm()).fold(0.0, f64::max);
+        err / rhs.iter().map(|p| p.norm()).fold(0.0, f64::max)
+    }
+
+    /// A complex-symmetric grid K + 0.3 i K₀ on the pattern of a real grid: its Hermitian part
+    /// differs from its symmetric part, so a conjugate anywhere in the factorization is a wrong
+    /// answer, not a rounding change.
+    fn complex_grid(n: [usize; 3], sigma: f64) -> Csr<Complex64> {
+        let real = |v: f64| Complex64::new(v, 0.0);
+        let k = shifted_grid(n, sigma).0.map_values(real);
+        let k0 = shifted_grid(n, 0.0).0.map_values(real);
+        k.add_scaled(Complex64::new(0.0, 0.3), &k0).unwrap()
+    }
+
+    fn sample_solution(n: usize) -> Vec<Complex64> {
+        (0..n).map(|i| Complex64::new((i as f64 * 0.37).sin(), (i as f64 * 0.11).cos())).collect()
+    }
+
+    #[test]
+    fn complex_symmetric_systems_solve_with_the_transpose() {
+        let a = complex_grid([5, 4, 4], 2.1);
+        // Symmetric, not Hermitian: a(0, 3) = a(3, 0) but a(0, 3) ≠ conj a(3, 0).
+        assert_eq!(at(&a, 0, 3), at(&a, 3, 0));
+        assert!((at(&a, 0, 3) - at(&a, 3, 0).conj()).norm() > 0.1);
+        let x = sample_solution(a.n);
+        let mut b = vec![Complex64::ZERO; a.n];
+        a.mul(&x, &mut b);
+        let rhs = b.clone();
+        // One analysis of the real pattern serves the complex matrix.
+        let symbolic = Symbolic::new(&UpperColumns::from_symmetric(&a.map_values(|v| v.re)), usize::MAX).unwrap();
+        let f = LdltFactor::from_symbolic(&symbolic, &UpperColumns::from_symmetric(&a)).unwrap();
+        f.solve(&mut b).unwrap();
+        let err = b.iter().zip(&x).map(|(p, q)| (*p - *q).norm()).fold(0.0, f64::max);
+        let residual = complex_residual(&a, &b, &rhs);
+        assert!(err < 1e-10 && residual < 1e-12, "error {err}, relative residual {residual}");
+    }
+
+    #[test]
+    fn complex_solve_matches_the_real_two_by_two_block_form() {
+        // (K + iC)(x + iy) = b_r + i b_i is the real symmetric [[K, −C], [−C, −K]] acting on (x, y)
+        // with the right-hand side (b_r, −b_i). K is positive definite here.
+        let (k, _) = shifted_grid([4, 3, 3], -0.5);
+        let (c, _) = shifted_grid([4, 3, 3], 0.0);
+        let n = k.n;
+        let a = k.map_values(|v| Complex64::new(v, 0.0)).add_scaled(Complex64::new(0.0, 1.0), &c.map_values(|v| Complex64::new(v, 0.0))).unwrap();
+        let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); 2 * n];
+        for i in 0..n {
+            let (kc, kv) = k.row(i);
+            for (j, v) in kc.iter().zip(kv) {
+                rows[i].push((*j, *v));
+                rows[n + i].push((n + *j, -*v));
+            }
+            let (cc, cv) = c.row(i);
+            for (j, v) in cc.iter().zip(cv) {
+                rows[i].push((n + *j, -*v));
+                rows[n + i].push((*j, -*v));
+            }
+        }
+        let block = csr(&rows);
+        let b_re: Vec<f64> = (0..n).map(|i| ((i + 1) as f64 * 0.7).sin()).collect();
+        let b_im: Vec<f64> = (0..n).map(|i| (i as f64 * 0.4).cos()).collect();
+        let mut real_rhs: Vec<f64> = b_re.clone();
+        real_rhs.extend(b_im.iter().map(|v| -v));
+        let real = LdltFactor::new(&UpperColumns::from_symmetric(&block), usize::MAX).unwrap();
+        real.solve(&mut real_rhs).unwrap();
+        let mut z: Vec<Complex64> = b_re.iter().zip(&b_im).map(|(r, i)| Complex64::new(*r, *i)).collect();
+        let rhs = z.clone();
+        let complex = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&a), usize::MAX).unwrap();
+        complex.solve(&mut z).unwrap();
+        let scale = z.iter().map(|v| v.norm()).fold(0.0, f64::max);
+        let gap = (0..n).map(|i| (z[i] - Complex64::new(real_rhs[i], real_rhs[n + i])).norm()).fold(0.0, f64::max);
+        assert!(gap < 1e-10 * scale, "gap {gap} against a solution of {scale}");
+        assert!(complex_residual(&a, &z, &rhs) < 1e-12);
+    }
+
+    #[test]
+    fn damped_oscillators_match_the_closed_form() {
+        // Dynamic stiffness K − ω²M + iωC with m = 1, k = 4, c = 0.5, ω = 1.3.
+        let (k, c, w) = (4.0f64, 0.5f64, 1.3f64);
+        let d = Complex64::new(2.0 * k - w * w, w * c);
+        // One mass on a spring and damper: x = F / (k − ω²m + iωc).
+        let sdof = Csr::<Complex64> { n: 1, ptr: vec![0, 1], idx: vec![0], val: vec![Complex64::new(k - w * w, w * c)] };
+        let f = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&sdof), usize::MAX).unwrap();
+        let mut x = [Complex64::new(1.0, 0.0)];
+        f.solve(&mut x).unwrap();
+        let expected = Complex64::new(1.0, 0.0) / Complex64::new(k - w * w, w * c);
+        assert!((x[0] - expected).norm() < 1e-12 * expected.norm());
+        // Two masses, each grounded by k and coupled by k: [[d, −k], [−k, d]] x = F, solved by
+        // Cramer's rule: x₁ = (d F₁ + k F₂)/(d² − k²), x₂ = (k F₁ + d F₂)/(d² − k²).
+        let two =
+            Csr::<Complex64> { n: 2, ptr: vec![0, 2, 4], idx: vec![0, 1, 0, 1], val: vec![d, Complex64::new(-k, 0.0), Complex64::new(-k, 0.0), d] };
+        let (f1, f2) = (Complex64::new(1.0, 0.0), Complex64::new(0.5, 0.0));
+        let det = d * d - Complex64::new(k * k, 0.0);
+        let kc = Complex64::new(k, 0.0);
+        let expected = [(d * f1 + kc * f2) / det, (kc * f1 + d * f2) / det];
+        let factor = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&two), usize::MAX).unwrap();
+        let mut x = [f1, f2];
+        factor.solve(&mut x).unwrap();
+        for (got, want) in x.iter().zip(&expected) {
+            assert!((*got - *want).norm() < 1e-12 * want.norm(), "{got} against {want}");
+        }
+    }
+
+    #[test]
+    fn complex_saddle_point_forces_two_by_two_pivots() {
+        let a = saddle(8, 3).map_values(|v| Complex64::new(v, 0.3 * v));
+        let f = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&a), usize::MAX).unwrap();
+        assert!(f.two_by_two() > 0);
+        let x = sample_solution(a.n);
+        let mut rhs = vec![Complex64::ZERO; a.n];
+        a.mul(&x, &mut rhs);
+        let mut solved = rhs.clone();
+        f.solve(&mut solved).unwrap();
+        let residual = complex_residual(&a, &solved, &rhs);
+        assert!(residual < 1e-12, "relative residual {residual}");
+    }
+
+    #[test]
+    fn complex_factor_is_the_same_on_any_number_of_threads() {
+        let a = complex_grid([10, 9, 8], 2.7);
+        let upper = UpperColumns::from_symmetric(&a);
+        let one = parallel::with_threads(1, || LdltFactor::<Complex64>::new(&upper, usize::MAX)).unwrap();
+        let x = sample_solution(a.n);
+        let mut rhs = vec![Complex64::ZERO; a.n];
+        a.mul(&x, &mut rhs);
+        let mut reference = rhs.clone();
+        one.solve(&mut reference).unwrap();
+        let same = |p: &Complex64, q: &Complex64| p.re.to_bits() == q.re.to_bits() && p.im.to_bits() == q.im.to_bits();
+        for threads in [2, 7] {
+            let other = parallel::with_threads(threads, || LdltFactor::<Complex64>::new(&upper, usize::MAX)).unwrap();
+            for (p, q) in one.blocks.iter().zip(&other.blocks) {
+                assert!(p.values.iter().zip(&q.values).all(|(u, v)| same(u, v)) && p.order == q.order, "{threads} threads");
+            }
+            let mut solved = rhs.clone();
+            other.solve(&mut solved).unwrap();
+            assert!(solved.iter().zip(&reference).all(|(u, v)| same(u, v)), "solution on {threads} threads");
+        }
+        assert!(complex_residual(&a, &reference, &rhs) < 1e-11);
+    }
+
+    #[test]
+    fn singular_complex_matrices_are_located_errors() {
+        // A complex Laplacian with the constant vector in its null space.
+        let n = 10;
+        let rows: Vec<Vec<(usize, Complex64)>> = (0..n)
+            .map(|i: usize| {
+                let mut r = vec![];
+                let mut d = 0.0;
+                for j in [i.wrapping_sub(1), i + 1] {
+                    if j < n {
+                        r.push((j, Complex64::new(-1.0, 0.0)));
+                        d += 1.0;
+                    }
+                }
+                r.push((i, Complex64::new(d, 0.0)));
+                r
+            })
+            .collect();
+        let laplacian = csr(&rows);
+        let e = LdltFactor::<Complex64>::new(&UpperColumns::from_symmetric(&laplacian), usize::MAX).unwrap_err();
+        assert!(matches!(e, FactorError::Singular { column } if column < n), "{e:?}");
     }
 }

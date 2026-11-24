@@ -107,11 +107,9 @@ impl Design {
 /// The newest design format the pinned SolidCraft reads (and the one it writes).
 pub const DESIGN_FORMAT: u32 = solidcraft_doc::format::FORMAT;
 
-fn is_exchange_file(path: &str) -> bool {
-    std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| ["step", "stp", "iges", "igs"].iter().any(|suffix| ext.eq_ignore_ascii_case(suffix)))
+/// STEP and IGES paths supported by FieldCraft. SolidCraft also handles native CAD through this reader.
+pub fn is_exchange_file(path: &str) -> bool {
+    solidcraft_io::is_step_path(path) && !solidcraft_io::is_native_cad_path(path)
 }
 
 /// Byte limit for a design source, applied before reading its contents.
@@ -141,7 +139,13 @@ pub fn open_geometry(path: &str, bytes: &[u8]) -> Result<(Design, Vec<String>)> 
     if design.bodies.is_empty() {
         return Err(crate::Error::Invalid(format!("no bodies in `{path}`")));
     }
-    Ok((design, imported.warnings))
+    let mut warnings = imported.warnings;
+    for (body, hidden) in design.bodies.iter().zip(imported.invisible) {
+        if hidden {
+            warnings.push(format!("Body `{}` is marked invisible in the source and was included in the analysis geometry.", body.name));
+        }
+    }
+    Ok((design, warnings))
 }
 
 /// Open a design from its file bytes (a `.solidcraft` container or a JSON design) and rebuild it.
@@ -369,15 +373,8 @@ mod tests {
 
     #[test]
     fn iges_retains_the_geometry_and_unreadable_exchange_is_an_error() {
-        let shape = crate::block([0.0; 3], [2.0, 3.0, 4.0]).unwrap();
-        let text = guard("write sample IGES", || {
-            solidcraft_kernel::iges_export_bodies(
-                &[solidcraft_kernel::ExportBody { name: "Pad".into(), body: &shape.body, color: None }],
-                &solidcraft_kernel::StepHeader::default(),
-            )
-        })
-        .unwrap();
-        let (d, _) = open_geometry("pad.IGS", text.as_bytes()).unwrap();
+        let bytes = crate::sample::iges_block().unwrap();
+        let (d, _) = open_geometry("pad.IGS", &bytes).unwrap();
         assert_eq!(d.bodies.len(), 1);
         assert!((d.bodies[0].measure().unwrap().volume - 24.0).abs() < 1e-8);
         for file in ["broken.step", "broken.IGES"] {

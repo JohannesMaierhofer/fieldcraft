@@ -11,8 +11,12 @@
 //!   walls (moving walls after Ladd), slip faces, Zou–He inlets and outlets, and the
 //!   momentum-exchange force on every wall; fans (a pressure–flow curve) and porous zones
 //!   (Darcy–Forchheimer resistance) as body forces.
+//! - [`distance`]: every fluid cell's exact distance to the nearest no-slip wall, for
+//!   turbulence models that read it.
 //! - [`bounce`]: Han, Ooka and Kikumoto's on-node wall-function bounce (their eq. 14).
-//! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box.
+//! - [`outlet`]: convective pressure outlets, which carry a wake or vortices out of the box, and
+//!   characteristic ones, which let an outgoing pressure wave leave.
+//! - [`reflection`]: the plane-pulse check of the characteristic outlet's reflection.
 //! - [`solve`]: the time loop, output frames and force histories in model units.
 //! - [`steady`]: the steady-state monitor and stop rule of a run.
 //! - [`rheology`]: shear-dependent viscosity (power law, Carreau–Yasuda, Cross, Cross-WLF), each
@@ -65,15 +69,19 @@ pub mod baffle;
 pub mod bounce;
 pub mod checkpoint;
 pub mod conduction;
+pub mod distance;
 pub mod flow;
 pub mod hrr;
+pub mod inlet;
 pub mod lattice;
 pub mod memory;
 pub mod mrt;
 pub mod outlet;
 pub mod ports;
+pub mod reflection;
 pub mod regularized;
 pub mod rheology;
+pub mod sa;
 pub mod setup;
 pub mod solve;
 pub mod statistics;
@@ -90,7 +98,7 @@ pub use flow::{Flow, Group, Interpolation, Link, OpenCell, Rule, Target, Thermal
 pub use memory::{DeviceBuffer, Memory};
 pub use ports::{FaceMean, Port, PortProperties, Stream};
 pub use setup::{ContactSetup, PhaseSetup, SolidSetup, SurfaceSetup, ThermalSetup};
-pub use setup::{Obstacle, Setup, ZoneKind, ZoneSetup, fluid_step};
+pub use setup::{Obstacle, SaSetup, Setup, ZoneKind, ZoneSetup, fluid_step};
 pub use solve::{
     ComponentCheck, FluidResult, FluidStats, ForceHistory, Frame, FreeSurfaceStats, HeatHistory, Peak, ShearDependentTau, SolidResult,
     SurfaceHistory, ZoneHistory, run, solve_fluid, solve_fluid_on,
@@ -110,7 +118,10 @@ pub enum Error {
     /// The run diverged.
     #[error("unstable: {0}")]
     Unstable(String),
-    /// A device backend could not be selected, created or stepped.
+    /// Adapter selection returned no device (including when the policy forces CPU).
+    #[error("backend error: no GPU device; solve with `backend: \"cpu\"`")]
+    NoDevice,
+    /// A device backend failed to select, create or step a device.
     #[error("backend error: {0}")]
     Backend(String),
     #[error(transparent)]
