@@ -13,9 +13,15 @@ use std::collections::BTreeMap;
 const MAGIC_WITH_UNITS: &[u8; 8] = b"FCEXT002";
 
 pub(crate) fn encode(series: &Series) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    append_series(&mut bytes, series)?;
+    Ok(bytes)
+}
+
+fn append_series(bytes: &mut Vec<u8>, series: &Series) -> Result<()> {
     series.check()?;
     let with_units = series.frames.iter().any(|f| f.displacement_unit.is_some());
-    let mut bytes = if with_units { MAGIC_WITH_UNITS } else { MAGIC }.to_vec();
+    bytes.extend_from_slice(if with_units { MAGIC_WITH_UNITS } else { MAGIC });
     bytes.extend_from_slice(&(series.frames.len() as u32).to_le_bytes());
     for frame in &series.frames {
         if with_units {
@@ -48,7 +54,7 @@ pub(crate) fn encode(series: &Series) -> Result<Vec<u8>> {
             }
         }
     }
-    Ok(bytes)
+    Ok(())
 }
 
 struct Reader<'a> {
@@ -143,7 +149,12 @@ impl<'a> Reader<'a> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn decode(bytes: &[u8]) -> Result<Series> {
+    decode_limited(bytes, MAX_BYTES, MAX_FRAMES)
+}
+
+fn decode_limited(bytes: &[u8], limit: usize, frame_limit: usize) -> Result<Series> {
     if bytes.len() > MAX_BYTES {
         return Err(storage_limit());
     }
@@ -151,8 +162,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Series> {
     let magic = if with_units { MAGIC_WITH_UNITS } else { MAGIC };
     let body = bytes.strip_prefix(magic).ok_or_else(|| Error::Invalid(format!("{PART}: unknown external results encoding")))?;
     let mut reader = Reader { rest: body };
-    let count = reader.count(MAX_FRAMES, "frames")?;
-    let mut remaining = MAX_BYTES;
+    let count = reader.count(frame_limit, "frames")?;
+    let mut remaining = limit;
     let mut frames = Vec::new();
     for _ in 0..count {
         frames.push(reader.frame(&mut remaining, with_units)?);
@@ -163,4 +174,71 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Series> {
     let series = Series { frames };
     series.check_timeline()?;
     Ok(series)
+}
+
+const CATALOG_MAGIC: &[u8; 8] = b"FCEXT003";
+
+pub(crate) fn encode_catalog(catalog: &super::Catalog) -> Result<Vec<u8>> {
+    if catalog.iter().count() == 1
+        && let Some(default) = catalog.get("")
+    {
+        return encode(&default.series);
+    }
+    let mut out = CATALOG_MAGIC.to_vec();
+    out.extend_from_slice(&(catalog.iter().count() as u32).to_le_bytes());
+    for (key, data) in catalog.iter() {
+        for text in [key, data.design.as_deref().unwrap_or("")] {
+            out.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            out.extend_from_slice(text.as_bytes());
+        }
+        let size_at = out.len();
+        out.extend_from_slice(&0u32.to_le_bytes());
+        let start = out.len();
+        append_series(&mut out, &data.series)?;
+        if out.len() > MAX_BYTES {
+            return Err(storage_limit());
+        }
+        let size = u32::try_from(out.len() - start).map_err(|_| storage_limit())?;
+        out.get_mut(size_at..start).ok_or_else(storage_limit)?.copy_from_slice(&size.to_le_bytes());
+    }
+    Ok(out)
+}
+
+pub(crate) fn decode_catalog(bytes: &[u8]) -> Result<super::Catalog> {
+    if bytes.len() > MAX_BYTES {
+        return Err(storage_limit());
+    }
+    let mut catalog = super::Catalog::default();
+    let Some(body) = bytes.strip_prefix(CATALOG_MAGIC) else {
+        catalog.insert(String::new(), None, decode_limited(bytes, MAX_BYTES, MAX_FRAMES)?)?;
+        return Ok(catalog);
+    };
+    let mut reader = Reader { rest: body };
+    let count = reader.count(MAX_FRAMES, "datasets")?;
+    if count == 0 {
+        return invalid("empty external result catalog");
+    }
+    for _ in 0..count {
+        let mut text = || -> Result<&str> {
+            let len = usize::from(u16::from_le_bytes(reader.number()?));
+            if len > 256 {
+                return invalid("external result dataset label is too long");
+            }
+            std::str::from_utf8(reader.take(len)?).map_err(|e| Error::Invalid(e.to_string()))
+        };
+        let key = text()?;
+        let digest = text()?;
+        if catalog.get(key).is_some() {
+            return invalid("duplicate external result dataset");
+        }
+        let size = reader.count(MAX_BYTES, "dataset bytes")?;
+        let metadata = super::Catalog::metadata_bytes(key, Some(digest));
+        let remaining = catalog.remaining_for(key).checked_sub(metadata).ok_or_else(storage_limit)?;
+        let series = decode_limited(reader.take(size)?, remaining, MAX_FRAMES - catalog.frame_count())?;
+        catalog.insert(key.into(), (!digest.is_empty()).then(|| digest.into()), series)?;
+    }
+    if !reader.rest.is_empty() {
+        return invalid("unexpected bytes after last external result dataset");
+    }
+    Ok(catalog)
 }

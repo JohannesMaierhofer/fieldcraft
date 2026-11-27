@@ -385,7 +385,7 @@ pub struct Session {
     /// [`Session::results_stored`] as last saved (or opened).
     saved_results: u64,
     /// Imported solution values belong to their own grids. Session snapshots share the data.
-    external: Option<Arc<fieldcraft_io::external::Series>>,
+    external: Option<Arc<fieldcraft_io::external::Catalog>>,
     /// Changes when an import replaces the dataset even if the model revision stays current.
     external_generation: u64,
     saved_external_generation: u64,
@@ -816,7 +816,8 @@ impl Session {
 
     /// The imported result frames, including their own sampling geometry.
     pub fn external_results(&self) -> Option<&fieldcraft_io::external::Series> {
-        self.external.as_deref()
+        let body = self.external_view.as_ref()?.body.as_deref().unwrap_or("");
+        Some(self.external.as_deref()?.get(body)?.series.as_ref())
     }
 
     /// A revision for cached scenes of imported results, independent of the analysis model.
@@ -826,9 +827,20 @@ impl Session {
 
     /// Replace the imported dataset after validating it in full. Existing solves stay current.
     pub fn set_external_results(&mut self, series: fieldcraft_io::external::Series) -> Result<()> {
-        series.check()?;
-        self.external_view = Some(external_view::ExternalView::initial(&series));
-        self.external = Some(Arc::new(series));
+        self.store_external_dataset("", None, series)
+    }
+
+    pub fn external_datasets(&self) -> impl Iterator<Item = (&str, &fieldcraft_io::external::Dataset)> {
+        self.external.iter().flat_map(|c| c.iter())
+    }
+
+    fn store_external_dataset(&mut self, key: &str, design: Option<String>, series: fieldcraft_io::external::Series) -> Result<()> {
+        let mut selected = external_view::ExternalView::initial(&series);
+        selected.body = (!key.is_empty()).then(|| key.to_owned());
+        let mut catalog = self.external.as_deref().cloned().unwrap_or_default();
+        catalog.insert(key.to_owned(), design, series)?;
+        self.external_view = Some(selected);
+        self.external = Some(Arc::new(catalog));
         self.external_generation = next_revision();
         Ok(())
     }

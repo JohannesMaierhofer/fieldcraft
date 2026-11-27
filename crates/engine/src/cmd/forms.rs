@@ -3239,14 +3239,19 @@ pub const RESULTS_LINEARIZE: &[Field] = &[
         .def("41"),
 ];
 pub const IMPORT_VTU: &[Field] = &[
-    path("path", "Results file", false)
-        .req()
-        .help("A VTU grid, a single-piece PVTU, or a PVD time series. Importing replaces the previous external result series."),
+    text("body", "CAD body").hint("Standalone").help("Select a CAD body by its exact name to attach the result to its visibility."),
+    path("path", "Results file", false).req().help(
+        "A VTU grid, a single-piece PVTU, or a PVD time series. Importing replaces only the dataset for the same body or the standalone dataset.",
+    ),
     text("unit", "Length unit")
         .hint("m")
         .help("VTU carries no units. Enter the unit of the coordinates and displacement vectors, such as mm, m, or in. The default is meters."),
 ];
 pub const EXTERNAL_VIEW: &[Field] = &[
+    text("body", "Result body")
+        .clearable()
+        .hint("Current dataset")
+        .help("Enter an imported body name, or use Clear to select the standalone dataset."),
     int("frame", "Frame", 0, fieldcraft_io::external::MAX_FRAMES as i64 - 1).help("Frame index, starting at zero."),
     choice("association", "Field location", &[("point", "Points"), ("cell", "Cells")]).help("Where the selected values are stored."),
     text("field", "Contour field").clearable().hint("Current contour").help("Enter an array name, or choose Clear to turn contours off."),

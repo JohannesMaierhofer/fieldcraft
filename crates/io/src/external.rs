@@ -8,7 +8,11 @@ use std::collections::BTreeMap;
 use crate::{Error, Result, invalid};
 
 mod binary;
+mod catalog;
+#[cfg(test)]
 pub(crate) use binary::{decode, encode};
+pub(crate) use binary::{decode_catalog, encode_catalog};
+pub use catalog::{Catalog, Dataset};
 
 pub(crate) const PART: &str = "external.bin";
 const MAGIC: &[u8; 8] = b"FCEXT001";
@@ -197,6 +201,38 @@ impl Series {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn body_catalog_keeps_independent_timelines_and_reads_legacy_frames() {
+        let one = Series { frames: vec![frame(0.0)] };
+        let legacy = encode(&one).unwrap();
+        let mut catalog = decode_catalog(&legacy).unwrap();
+        assert_eq!(encode_catalog(&catalog).unwrap(), legacy);
+        assert_eq!(catalog.get("").unwrap().series.as_ref(), &one);
+        let original = catalog.clone();
+        let hash = "a".repeat(64);
+        catalog.insert("Housing".into(), Some(hash.clone()), one.clone()).unwrap();
+        assert_eq!(catalog.frame_count(), 2);
+        assert_eq!(original.retained_bytes(Some(&catalog)), 0);
+        let initial = catalog.clone();
+        assert!(catalog.insert("Cover".into(), None, one.clone()).is_err());
+        assert_eq!(catalog, initial);
+        let encoded = encode_catalog(&catalog).unwrap();
+        assert_eq!(decode_catalog(&encoded).unwrap(), catalog);
+        assert!(decode_catalog(&encoded[..encoded.len() - 1]).is_err());
+        let mut extra = encoded;
+        extra.push(0);
+        assert!(decode_catalog(&extra).is_err());
+
+        let new = Series { frames: vec![frame(0.0), frame(1.0)] };
+        let size = catalog.storage_bytes();
+        catalog.insert("Housing".into(), Some(hash), new.clone()).unwrap();
+        assert_eq!(catalog.frame_count(), 3);
+        assert_eq!(catalog.get("Housing").unwrap().series.as_ref(), &new);
+        assert_eq!(catalog.get("").unwrap().series.as_ref(), &one);
+        assert_eq!(catalog.storage_bytes() - size, new.frames[1].storage_bytes());
+        assert_eq!(catalog.remaining_for("Housing"), MAX_BYTES - original.storage_bytes());
+    }
 
     fn frame(time: f64) -> Frame {
         Frame {

@@ -518,7 +518,7 @@ fn a_crashed_unsaved_external_series_recovers_without_its_source_files() {
     run_child(&dir, "idle");
     let (_, report) = only_report(&dir);
     let snapshot = fieldcraft_io::read(&fs::read(report["model_path"].as_str().unwrap()).unwrap()).unwrap();
-    assert_eq!(snapshot.external.as_ref().unwrap().frames.len(), 2);
+    assert_eq!(snapshot.external.as_ref().unwrap().frame_count(), 2);
     assert_eq!(snapshot.external_view.unwrap()["scale"], 6.0);
 
     let recovery = dir.join("recovery");

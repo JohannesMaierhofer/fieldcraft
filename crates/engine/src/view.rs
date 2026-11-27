@@ -515,6 +515,7 @@ impl Picture {
 
 #[derive(Debug)]
 pub(super) struct ExternalRange {
+    body: Option<String>,
     generation: u64,
     field: String,
     association: crate::external_view::Association,
@@ -531,6 +532,7 @@ impl Session {
         let mut cache = self.external_range.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(range) = cache.as_ref()
             && range.generation == self.external_generation()
+            && range.body == view.body
             && range.field == *field
             && range.association == view.association
             && range.component == view.component
@@ -539,6 +541,7 @@ impl Session {
         }
         let bands = view.bands(series);
         *cache = Some(ExternalRange {
+            body: view.body.clone(),
             generation: self.external_generation(),
             field: field.clone(),
             association: view.association,

@@ -465,7 +465,7 @@ pub struct ModelApp {
     pub features_open: std::collections::BTreeSet<(String, u64)>,
     /// Whether results were shown last frame (the Results tab comes up when they appear).
     results_shown: bool,
-    external_fit: Option<(u64, usize, u64, Option<String>)>,
+    external_fit: Option<(u64, Option<String>, usize, u64, Option<String>)>,
     external_bounds: Aabb3,
     external_clock: Option<(u64, f64, usize)>,
     external_display_error: Option<String>,
@@ -1310,7 +1310,16 @@ impl ModelApp {
         let marks = fieldcraft_engine::view::geometry_marks(&self.session).map(|m| m as *const _ as usize);
         (self.revision, self.ui.style, self.ui.show(), self.ui.dark, plot, self.selected_datum(), marks).hash(&mut h);
         if let Some((_, view)) = fieldcraft_engine::external_view::visible(&self.session) {
-            (self.session.external_generation(), view.frame, view.association, &view.field, view.component, &view.displacement, view.scale.to_bits())
+            (
+                self.session.external_generation(),
+                &view.body,
+                view.frame,
+                view.association,
+                &view.field,
+                view.component,
+                &view.displacement,
+                view.scale.to_bits(),
+            )
                 .hash(&mut h);
         }
         format!("{:?}", self.datum_preview()).hash(&mut h);
@@ -2365,11 +2374,11 @@ impl ModelApp {
         self.advance_external_playback(ctx);
         // Results coming up (a solve, a results command) bring the Results tab.
         let external = fieldcraft_engine::external_view::visible(&self.session)
-            .map(|(_, v)| (self.session.external_generation(), v.frame, v.scale.to_bits(), v.displacement.clone()));
-        if let Some((generation, ..)) = &external
+            .map(|(_, v)| (self.session.external_generation(), v.body.clone(), v.frame, v.scale.to_bits(), v.displacement.clone()));
+        if let Some((generation, body, ..)) = &external
             && self.external_fit != external
         {
-            let fit = if self.external_fit.as_ref().is_none_or(|(old, ..)| old != generation) {
+            let fit = if self.external_fit.as_ref().is_none_or(|(old, old_body, ..)| old != generation || old_body != body) {
                 framing::Reframe::Fit
             } else {
                 framing::Reframe::IfOffscreen

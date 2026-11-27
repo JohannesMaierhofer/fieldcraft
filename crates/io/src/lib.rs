@@ -469,7 +469,7 @@ pub struct ModelFile {
     /// The solved results the file keeps (`results.bin`), in step name order.
     pub results: Vec<results::Stored>,
     /// Imported result frames with their own sampling grids.
-    pub external: Option<external::Series>,
+    pub external: Option<external::Catalog>,
     /// Display selection on the imported grid, checked by the engine against its frame.
     pub external_view: Option<Value>,
     /// Why the file's results were left unread (they are of another results encoding): the
@@ -504,7 +504,7 @@ pub struct Extras<'a> {
     /// Solved results to keep (`results.bin`), by step name.
     pub results: Vec<(&'a str, results::StoredRef<'a>)>,
     /// Imported result series to embed.
-    pub external: Option<&'a external::Series>,
+    pub external: Option<&'a external::Catalog>,
     /// Display parameters applied to the imported frames on open.
     pub external_view: Option<Value>,
     /// Geometry files to embed, by the SHA-256 of their content: a geometry source whose hash is
@@ -608,7 +608,7 @@ pub fn write_with(
         parts.push((results::PART.into(), results::encode(&extras.results)?.into()));
     }
     if let Some(series) = extras.external {
-        parts.push((external::PART.into(), external::encode(series)?.into()));
+        parts.push((external::PART.into(), external::encode_catalog(series)?.into()));
     }
     // Each embedded file once, by its content, under a name from its path.
     let mut geometry = geometry.clone();
@@ -773,7 +773,7 @@ pub fn read_versioned(bytes: &[u8]) -> Result<(ModelFile, u32)> {
     // Decoded at once, so the part's bytes are not kept beside the results.
     let decoded = if listed.contains_key(results::PART) { Some(results::decode(&part(results::PART, results::MAX_BYTES)?)?) } else { None };
     let external =
-        if listed.contains_key(external::PART) { Some(external::decode(&part(external::PART, external::MAX_BYTES as u64)?)?) } else { None };
+        if listed.contains_key(external::PART) { Some(external::decode_catalog(&part(external::PART, external::MAX_BYTES as u64)?)?) } else { None };
     let model_json = part(MODEL, MAX_TEXT_PART_BYTES)?;
     let mesh = part(MESH, mesh::MAX_BYTES)?;
     let journal_json = part(JOURNAL, MAX_TEXT_PART_BYTES)?;

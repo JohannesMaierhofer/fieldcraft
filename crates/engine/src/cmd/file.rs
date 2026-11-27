@@ -284,22 +284,22 @@ impl Session {
     /// Recovery snapshots include imported frames, whose source may have moved or changed.
     /// Native solver results follow the existing recovery policy and can be recomputed.
     pub(crate) fn recovery_bytes(&self) -> Result<Vec<u8>> {
-        self.package_bytes(None, Keep::default(), self.external_results())
+        self.package_bytes(None, Keep::default(), self.external.as_deref())
     }
 
     /// [`Session::file_bytes`], keeping what `keep` says.
     pub fn file_bytes_with(&self, base: Option<&Path>, keep: Keep) -> Result<Vec<u8>> {
-        self.package_bytes(base, keep, if keep.results { self.external_results() } else { None })
+        self.package_bytes(base, keep, if keep.results { self.external.as_deref() } else { None })
     }
 
-    fn package_bytes(&self, base: Option<&Path>, keep: Keep, external: Option<&fieldcraft_io::external::Series>) -> Result<Vec<u8>> {
+    fn package_bytes(&self, base: Option<&Path>, keep: Keep, external: Option<&fieldcraft_io::external::Catalog>) -> Result<Vec<u8>> {
         let stored = |s: &SourceFile| s.with_path(stored_path(s.path(), base));
         let geometry = Geometry {
             design: self.sources.design.as_ref().map(stored).transpose()?,
             meshes: self.sources.meshes.iter().map(stored).collect::<fieldcraft_io::Result<_>>()?,
         };
         let copies = if keep.geometry { self.geometry_copies()? } else { Vec::new() };
-        let external_view = match (external, self.external_view.as_ref()) {
+        let external_view = match (external.and(self.external_results()), self.external_view.as_ref()) {
             (Some(series), Some(view)) => {
                 view.validate(series).map_err(EngineError::Params)?;
                 Some(serde_json::to_value(view).map_err(|e| EngineError::Params(format!("cannot save external result view: {e}")))?)
@@ -425,15 +425,21 @@ impl Session {
             surfaces.extend(opened.into_iter().flatten().map(Arc::new));
             sources.meshes.push(source.without_embedded());
         }
-        let external_view = file.external.as_ref().map(|series| {
+        let external_view = file.external.as_ref().and_then(|catalog| {
             if let Some(params) = file.external_view {
                 let parsed = serde_json::from_value::<crate::external_view::ExternalView>(params).map_err(|e| e.to_string());
-                match parsed.and_then(|view| view.validate(series).map(|()| view)) {
-                    Ok(view) => return view,
+                match parsed.and_then(|view| {
+                    let entry = catalog.get(view.body.as_deref().unwrap_or("")).ok_or("unknown external result dataset")?;
+                    view.validate(&entry.series).map(|()| view)
+                }) {
+                    Ok(view) => return Some(view),
                     Err(e) => warnings.push(format!("the saved external result view could not be restored: {e}")),
                 }
             }
-            crate::external_view::ExternalView::initial(series)
+            let (key, entry) = catalog.first()?;
+            let mut view = crate::external_view::ExternalView::initial(&entry.series);
+            view.body = (!key.is_empty()).then(|| key.to_owned());
+            Some(view)
         });
         let external_generation = if file.external.is_some() { next_revision() } else { 0 };
         let mut session = Session {
@@ -500,7 +506,7 @@ fn summary(s: &Session, warnings: &[String]) -> Value {
         "design": s.design.as_ref().map(|d| d.name.clone()),
         "surfaces": s.surfaces.len(),
         "results": s.result_steps().map(|(step, current)| json!({"step": step, "stale": !current})).collect::<Vec<_>>(),
-        "external_frames": s.external_results().map_or(0, |data| data.frames.len()),
+        "external_frames": s.external.as_ref().map_or(0, |data| data.frame_count()),
         "migrated_from": s.migrated_from,
         "warnings": warnings,
     })
@@ -586,9 +592,9 @@ fn contents(s: &Session, keep: Keep) -> Vec<String> {
         out.push(format!("the results of {count} ({})", steps.join(", ")));
     }
     if keep.results
-        && let Some(series) = s.external_results()
+        && let Some(catalog) = s.external.as_ref()
     {
-        let count = series.frames.len();
+        let count = catalog.frame_count();
         out.push(format!("{count} imported result frame{}", if count == 1 { "" } else { "s" }));
     }
     let named: Vec<&str> = s.sources.design.iter().chain(&s.sources.meshes).map(|f| f.path()).collect();

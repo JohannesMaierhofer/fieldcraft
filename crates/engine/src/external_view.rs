@@ -81,6 +81,8 @@ impl Component {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
     pub frame: usize,
     pub association: Association,
     pub field: Option<String>,
@@ -95,6 +97,7 @@ pub struct ExternalView {
 impl ExternalView {
     pub fn initial(series: &Series) -> Self {
         let mut view = Self {
+            body: None,
             frame: 0,
             association: Association::Point,
             field: None,
@@ -544,6 +547,15 @@ pub fn scene(
 /// The independently imported frame currently taking the place of the model in the viewport.
 pub fn visible(s: &crate::Session) -> Option<(&Frame, &ExternalView)> {
     let view = s.external_view.as_ref().filter(|v| v.show)?;
+    if let Some(body) = view.body.as_deref() {
+        let dataset = s.external.as_ref()?.get(body)?;
+        if s.sources.design.as_ref().map(|source| source.sha256()) != dataset.design.as_deref()
+            || !s.design.as_ref().is_some_and(|d| d.bodies.iter().filter(|b| b.name == body).count() == 1)
+            || !s.shows(fieldcraft_io::ItemKind::Body, body)
+        {
+            return None;
+        }
+    }
     Some((s.external_results()?.frames.get(view.frame)?, view))
 }
 

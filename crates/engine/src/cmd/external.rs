@@ -15,7 +15,7 @@ use crate::{CommandKind, CommandSpec, EngineError, Result, Session};
 pub const IMPORT: CommandSpec = CommandSpec {
     id: "results.import.vtu",
     label: "Import VTU Results",
-    params: r#"{"path":"solution.vtu" | "solution.pvtu" | "series.pvd","unit"?:"m"} — replace the imported results with a visualization grid or time series. VTU carries no units. Set the length unit of coordinates and displacement vectors (default: meters). The editable model and its solved steps are kept. Saving the project embeds the imported frames by default."#,
+    params: r#"{"path":"solution.vtu" | "solution.pvtu" | "series.pvd","unit"?:"m","body"?:"Housing"} — import or replace the standalone dataset or the named body’s own dataset. VTU carries no units. Set the length unit of coordinates and displacement vectors (default: meters). The editable model and its solved steps are kept. Saving the project embeds the imported frames by default."#,
     form: Some(super::forms::IMPORT_VTU),
     kind: CommandKind::Session,
     requires: &[],
@@ -25,7 +25,7 @@ pub const IMPORT: CommandSpec = CommandSpec {
 pub const VIEW: CommandSpec = CommandSpec {
     id: "results.external.view",
     label: "External Result View",
-    params: r#"{"frame"?:0,"association"?:"point"|"cell","field"?:"temperature","component"?:"value"|"magnitude"|"x"|"y"|"z","displacement"?:"u","scale"?:1,"show"?:true} — select an imported frame, contour or point displacement. An empty field or displacement name clears that selection. Returns the selected frame's time and available arrays."#,
+    params: r#"{"body"?:"Housing","frame"?:0,"association"?:"point"|"cell","field"?:"temperature","component"?:"value"|"magnitude"|"x"|"y"|"z","displacement"?:"u","scale"?:1,"show"?:true} — select a body dataset (empty body for standalone), an imported frame, contour or point displacement. An empty field or displacement name clears that selection. Returns the selected frame's time and available arrays."#,
     form: Some(super::forms::EXTERNAL_VIEW),
     kind: CommandKind::Session,
     requires: &[Requirement::ExternalResults],
@@ -39,21 +39,40 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         Quantity::Length.to_si(0.0, unit).map_err(|e| EngineError::invalid("unit", e.to_string()))?;
     }
     let unit = unit.as_ref().filter(|u| u.symbol() != "m");
+    let key = super::opt::<String>(p, "body")?.unwrap_or_default();
+    let design = if key.is_empty() {
+        None
+    } else {
+        if !s.design.as_ref().is_some_and(|d| d.bodies.iter().filter(|b| b.name == key).count() == 1) {
+            return Err(EngineError::invalid("body", "choose one existing, uniquely named CAD body"));
+        }
+        Some(
+            s.sources
+                .design
+                .as_ref()
+                .ok_or_else(|| EngineError::invalid("body", "the design must have a saved geometry source"))?
+                .sha256()
+                .to_owned(),
+        )
+    };
+    let available = s
+        .external
+        .as_ref()
+        .map_or(MAX_BYTES, |c| c.remaining_for(&key))
+        .saturating_sub(fieldcraft_io::external::Catalog::metadata_bytes(&key, design.as_deref()));
     let path = super::file_param(s, p, "path", Access::Read)?;
     let source = Path::new(&path);
     let mut remaining_input = MAX_BYTES;
     let frames = if extension(source, "pvd") {
-        read_collection(s, source, &mut remaining_input, unit)?
+        read_collection(s, source, &mut remaining_input, available, unit)?
     } else if extension(source, "vtu") || extension(source, "pvtu") {
-        vec![read_grid(s, source, extension(source, "pvtu"), 0.0, &mut remaining_input, MAX_FRAME_BYTES, unit)?]
+        vec![read_grid(s, source, extension(source, "pvtu"), 0.0, &mut remaining_input, available.min(MAX_FRAME_BYTES), unit)?]
     } else {
         return Err(EngineError::invalid("path", "expected a .vtu grid, a single-piece .pvtu, or a .pvd time series"));
     };
     let series = Series { frames };
-    let initial = ExternalView::initial(&series);
-    let result = describe(&series, &initial)?;
-    s.set_external_results(series)?;
-    Ok(result)
+    s.store_external_dataset(&key, design, series)?;
+    view(s, &json!({}))
 }
 
 fn extension(path: &Path, expected: &str) -> bool {
@@ -105,17 +124,17 @@ fn read_grid(
     Ok(fieldcraft_io::vtu::read_with_unit(&bytes, time, remaining_decoded, unit)?)
 }
 
-fn read_collection(s: &Session, source: &Path, remaining_input: &mut usize, unit: Option<&Unit>) -> Result<Vec<Frame>> {
+fn read_collection(s: &Session, source: &Path, remaining_input: &mut usize, available: usize, unit: Option<&Unit>) -> Result<Vec<Frame>> {
     let index = read_bytes(source, fieldcraft_io::vtu::MAX_INDEX_BYTES, remaining_input)?;
     let entries = fieldcraft_io::vtu::collection(&index)?;
     let mut frames = Vec::new();
     let mut decoded = 0usize;
     for (time, name) in entries {
         let path = relative_file(s, source, &name)?;
-        let frame = read_grid(s, &path, extension(Path::new(&name), "pvtu"), time, remaining_input, MAX_BYTES - decoded, unit)
+        let frame = read_grid(s, &path, extension(Path::new(&name), "pvtu"), time, remaining_input, available - decoded, unit)
             .map_err(|e| EngineError::invalid("path", format!("{name} at time {time}: {e}")))?;
         decoded = decoded.saturating_add(frame.storage_bytes());
-        if decoded > MAX_BYTES {
+        if decoded > available {
             return Err(EngineError::invalid("path", format!("imported series exceeds {MAX_BYTES} bytes")));
         }
         frames.push(frame);
@@ -124,8 +143,17 @@ fn read_collection(s: &Session, source: &Path, remaining_input: &mut usize, unit
 }
 
 fn view(s: &mut Session, p: &Value) -> Result<Value> {
-    let series = s.external_results().ok_or_else(|| EngineError::Params("import a VTU or PVD result first".into()))?;
-    let mut selected = s.external_view.clone().unwrap_or_else(|| ExternalView::initial(series));
+    let current = s.external_view.as_ref().and_then(|v| v.body.as_deref()).unwrap_or("");
+    let requested = super::opt::<String>(p, "body")?;
+    let key = requested.as_deref().unwrap_or(current);
+    let entry = s
+        .external
+        .as_ref()
+        .and_then(|c| c.get(key))
+        .ok_or_else(|| EngineError::invalid("body", "no imported results for this body or standalone dataset"))?;
+    let series = &entry.series;
+    let mut selected = s.external_view.as_ref().filter(|_| current == key).cloned().unwrap_or_else(|| ExternalView::initial(series));
+    selected.body = (!key.is_empty()).then(|| key.to_owned());
     let frame = super::opt(p, "frame")?.unwrap_or(selected.frame);
     let data = series.frames.get(frame).ok_or_else(|| EngineError::invalid("frame", "outside the imported time series"))?;
     if p.get("frame").is_some_and(|f| !f.is_null()) {
@@ -167,8 +195,10 @@ fn view(s: &mut Session, p: &Value) -> Result<Value> {
         selected.animate = false;
     }
     selected.validate(series).map_err(EngineError::Params)?;
-    let result = describe(series, &selected)?;
+    let mut result = describe(series, &selected)?;
+    result["datasets"] = json!(s.external_datasets().map(|(body, d)| json!({"body": body, "frames": d.series.frames.len()})).collect::<Vec<_>>());
     s.external_view = Some(selected);
+    result["visible"] = json!(crate::external_view::visible(s).is_some());
     Ok(result)
 }
 
@@ -253,6 +283,64 @@ mod tests {
         reopened.execute("file.open", &json!({"path":project})).unwrap();
         assert_eq!(displayed(&reopened), expected);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn independent_body_results_follow_only_their_owner_across_save_and_reopen() {
+        let dir = std::env::temp_dir().join(format!("fieldcraft-body-results-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let design = dir.join("assembly.step");
+        let source = dir.join("samples.vtu");
+        let project = dir.join("results.fieldcraft");
+        fs::write(&design, fieldcraft_geometry::sample::step_assembly(10.0).unwrap()).unwrap();
+        let mut session = Session::default();
+        session.execute("geometry.open", &json!({"path":design})).unwrap();
+        let names: Vec<String> = session.design.as_ref().unwrap().bodies.iter().map(|body| body.name.clone()).collect();
+        let (a, b) = (&names[0], &names[1]);
+        let import = |s: &mut Session, body: &str| s.execute(IMPORT.id, &json!({"path":source,"body":body}));
+        let select = |s: &mut Session, body: &str| s.execute(VIEW.id, &json!({"body":body})).unwrap();
+        let hidden = |s: &mut Session, cmd: &str, body: &str| s.execute(cmd, &json!({"items":[{"kind":"body","name":body}]})).unwrap();
+        let sample = |s: &Session| crate::external_view::visible(s).map(|(f, _)| f.point_data["T"].values.clone());
+        fs::write(&source, grid(0.0)).unwrap();
+        import(&mut session, a).unwrap();
+        let expected_a = sample(&session);
+        fs::write(&source, grid(5.0).replace("21 22 23", "91 92 93")).unwrap();
+        import(&mut session, b).unwrap();
+        let expected_b = sample(&session);
+        assert_ne!(expected_a, expected_b);
+        assert!(import(&mut session, "Missing body").is_err());
+        assert_eq!(sample(&session), expected_b);
+        assert_eq!(select(&mut session, a)["datasets"].as_array().unwrap().len(), 2);
+        assert_eq!(sample(&session), expected_a);
+        hidden(&mut session, "view.hide", a);
+        assert_eq!(sample(&session), None);
+        assert_eq!(select(&mut session, b)["visible"], true);
+        assert_eq!(sample(&session), expected_b);
+        hidden(&mut session, "view.isolate", b);
+        assert_eq!(select(&mut session, a)["visible"], false);
+
+        let smaller = r#"<VTKFile type="UnstructuredGrid" byte_order="LittleEndian"><UnstructuredGrid><Piece NumberOfPoints="2" NumberOfCells="1">
+<Points><DataArray type="Float64" NumberOfComponents="3" format="ascii">0 0 0 1 0 0</DataArray></Points>
+<Cells><DataArray type="Int32" Name="connectivity" format="ascii">0 1</DataArray><DataArray type="Int32" Name="offsets" format="ascii">2</DataArray><DataArray type="UInt8" Name="types" format="ascii">3</DataArray></Cells>
+<PointData><DataArray type="Float64" Name="T" format="ascii">7 8</DataArray></PointData></Piece></UnstructuredGrid></VTKFile>"#;
+        fs::write(&source, smaller).unwrap();
+        assert_eq!(import(&mut session, a).unwrap()["visible"], false);
+        session.execute("file.save_as", &json!({"path":project, "results":true, "geometry":"embed"})).unwrap();
+        fs::remove_file(&source).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("file.open", &json!({"path":project})).unwrap();
+        assert_eq!(sample(&reopened), None);
+        hidden(&mut reopened, "view.show", a);
+        assert_eq!(sample(&reopened), Some(vec![7., 8.]));
+        select(&mut reopened, b);
+        assert_eq!(sample(&reopened), expected_b);
+
+        // A revised geometry at the same path can reuse both names. It has a different identity.
+        fs::write(&design, fieldcraft_geometry::sample::step_assembly(15.0).unwrap()).unwrap();
+        reopened.execute("file.open", &json!({"path":project})).unwrap();
+        assert_eq!(select(&mut reopened, b)["visible"], false);
+        assert_eq!(sample(&reopened), None);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(unix)]

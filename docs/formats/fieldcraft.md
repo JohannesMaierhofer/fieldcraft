@@ -200,7 +200,7 @@ deformation leaves the stored grid coordinates and the analysis model untouched.
 while the imported grid is visible sets `external_camera` to true. Reopening that grid
 restores the saved camera target and zoom.
 
-A series in meters starts with the eight ASCII bytes `FCEXT001`. A series with an explicit non-meter unit uses `FCEXT002` and prefixes each frame with a u16 byte length and that UTF-8 unit symbol (zero length means meters). Coordinates are stored in meters. Other sample values keep their source units, including vector components that the view can interpret as displacements. Both encodings continue with a 32-bit frame count. All
+A series in meters starts with the eight ASCII bytes `FCEXT001`. A series with an explicit non-meter unit uses `FCEXT002` and prefixes each frame with a u16 byte length and that UTF-8 unit symbol (zero length means meters). Coordinates are stored in meters. Other sample values keep their source units, including vector components that the view can interpret as displacements. Both encodings continue with a 32-bit frame count. All A project with body-specific datasets uses `FCEXT003`. It stores the dataset count followed by each body name and its design’s SHA-256 as UTF-8 strings with 16-bit little-endian lengths, then a 32-bit byte count and the corresponding self-contained series. The standalone dataset uses empty name and digest strings. Dataset count, total frame count, and total decoded storage share the existing project limits.
 numbers are little-endian. Each frame holds its 64-bit floating-point time, a 32-bit point
 count, coordinate triples of 64-bit floats, a 32-bit cell count, then cells. A cell stores its
 8-bit VTK type followed by that type's fixed number of zero-based 32-bit point indices.

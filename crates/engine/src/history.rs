@@ -64,7 +64,7 @@ pub(crate) struct Document {
     pub(crate) migrated_from: Option<u32>,
     /// The sample it was opened as, which names it until it is saved ([`Session::sample`]).
     pub(crate) sample: Option<&'static str>,
-    external: Option<Arc<fieldcraft_io::external::Series>>,
+    external: Option<Arc<fieldcraft_io::external::Catalog>>,
     external_view: Option<crate::external_view::ExternalView>,
     saved_external_view: Option<crate::external_view::ExternalView>,
     external_generation: u64,
@@ -248,7 +248,7 @@ impl Session {
             .as_ref()
             .filter(|doc| doc.external_generation != self.external_generation)
             .and_then(|doc| doc.external.as_ref())
-            .map_or(0, |data| data.frames.iter().map(fieldcraft_io::external::Frame::storage_bytes).sum::<usize>());
+            .map_or(0, |data| data.retained_bytes(self.external.as_deref()));
         model_bytes(&state.model).saturating_add(design).saturating_add(surfaces).saturating_add(external)
     }
 

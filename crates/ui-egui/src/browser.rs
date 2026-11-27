@@ -991,6 +991,7 @@ enum Act {
     /// Select the item a right click opened its menu on (nothing for an item that cannot be).
     Focus(Target),
     ShowResult(String),
+    ShowExternal(String),
     /// The interactive command of a workflow or imported result row.
     Start(&'static str),
     /// An item menu's entry, or an item's eye.
@@ -1131,6 +1132,9 @@ pub fn browser(app: &mut ModelApp, ui: &mut egui::Ui) {
                 Target::Body(_) | Target::Surface(_) | Target::View(_) | Target::Render(_) | Target::RigidWall { .. } => app.select_definition(None),
             },
             Act::Menu(target, action) => menu::apply(app, target, action),
+            Act::ShowExternal(body) => {
+                let _ = app.run("results.external.view", json!({"body":body, "show":true}));
+            }
             Act::ShowResult(step) => {
                 // Errors show in the status bar.
                 let _ = app.run("results.deformed", json!({"step": step}));
@@ -1578,8 +1582,8 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
     // Results.
     if shown(app, &stages, "results") {
         let steps: Vec<(String, bool)> = app.session.result_steps().map(|(n, c)| (n.to_string(), c)).collect();
-        let imported = app.session.external_results().map(|s| s.frames.len());
-        let count = steps.len() + usize::from(imported.is_some());
+        let imported: Vec<_> = app.session.external_datasets().map(|(body, data)| (body.to_owned(), data.series.frames.len())).collect();
+        let count = steps.len() + imported.len();
         let external_shown = fieldcraft_engine::external_view::visible(&app.session).is_some();
         let displayed = app.session.results_view.as_ref().filter(|_| !external_shown).map(|v| v.step.clone());
         let (mark, tip) = state("results");
@@ -1617,22 +1621,29 @@ fn rows(app: &mut ModelApp, ui: &mut egui::Ui, acts: &mut Vec<Act>) {
                     acts.push(Act::ShowResult(step));
                 }
             }
-            if let Some(frames) = imported {
+            for (body, frames) in imported {
+                let selected = app.session.external_view.as_ref().is_some_and(|v| v.body.as_deref().unwrap_or("") == body);
                 let note = Some(format!("{frames} {}", if frames == 1 { "frame" } else { "frames" }));
                 let row = Row {
                     depth: 2,
                     icon: Some("results.import.vtu"),
-                    label: "Imported results",
+                    label: if body.is_empty() { "Imported results" } else { &body },
                     note,
-                    selected: external_shown,
+                    selected: selected && external_shown,
                     ..Default::default()
                 };
-                let r = draw_row(app, ui, egui::Id::unique("fc_row_external_results"), &row);
+                let r = draw_row(app, ui, egui::Id::unique(("fc_row_external_results", &body)), &row);
                 if let Some(resp) = r.response {
-                    app.place("browser/external_results", resp.rect);
+                    if body.is_empty() {
+                        app.place("browser/external_results", resp.rect);
+                    }
                 }
                 if r.clicked {
-                    acts.push(Act::Start("results.external.view"));
+                    if body.is_empty() && selected {
+                        acts.push(Act::Start("results.external.view"));
+                    } else {
+                        acts.push(Act::ShowExternal(body));
+                    }
                 }
             }
             for item in saved_items(app) {

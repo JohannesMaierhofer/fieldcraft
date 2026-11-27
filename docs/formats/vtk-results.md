@@ -1,6 +1,6 @@
 # Import external solver results
 
-Open a `.vtu` grid, a single-piece `.pvtu` index, or a `.pvd` time collection with **Results → Files → Import VTU**. You can also drop the file on the desktop window. A project can hold one imported series alongside its editable mesh and its native solver results. A successful import replaces the previous imported series.
+Open a `.vtu` grid, a single-piece `.pvtu` index, or a `.pvd` time collection with **Results → Files → Import VTU**. You can also drop the file on the desktop window. A project can hold one standalone series and a separate series for each body alongside its editable mesh and native solver results.
 
 ## From a solver to a FieldCraft project
 
@@ -22,6 +22,21 @@ This script selects the second frame and saves the project.
   {"command":"file.save_as","params":{"path":"solution.fieldcraft"}}
 ]
 ```
+
+## Results for several bodies
+
+Open a CAD design, then set **CAD body** when importing each body's VTU, PVTU, or PVD. FieldCraft keeps one independent dataset per body plus one standalone dataset. An import replaces only the selected slot. Fields and point counts may match or differ between datasets. Each dataset uses its own grid and arrays. Choose its body under **Results** in the model tree to display it.
+
+```json
+[
+  {"command":"results.import.vtu","params":{"path":"housing.vtu","body":"Housing","unit":"mm"}},
+  {"command":"results.import.vtu","params":{"path":"cover.pvd","body":"Cover","unit":"m"}},
+  {"command":"results.external.view","params":{"body":"Housing","field":"temperature"}},
+  {"command":"view.hide","params":{"items":[{"kind":"body","name":"Housing"}]}}
+]
+```
+
+Hiding the selected body returns the viewport to the model. Showing it restores its result if that dataset is still selected. Isolating another body also hides the selected body's result. Saving with results keeps all datasets and the selection. The association records the exact body name and the design file's content digest. A missing or revised design leaves its datasets hidden until you import them for the current design. An empty body name selects the standalone dataset. The viewport displays one selected dataset at a time.
 
 ## Try the included time series
 
